@@ -1,0 +1,6 @@
+{
+  "name": "Smart Expiry Tracker",
+  "description": "تطبيق إدارة تواريخ الصلاحية الذكي - تتبع صلاحية المنتجات بالذكاء الاصطناعي وبطاقات الفحص اليومي للفروع.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

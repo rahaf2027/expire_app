@@ -675,6 +675,49 @@ export default function App() {
     syncBranchData(actedProduct ? [actedProduct] : [], [newLog]);
   };
 
+  // Restore an archived product back to the active shelf
+  const handleProductRestore = (productId: string) => {
+    const targetProduct = products.find((p) => p.id === productId);
+    if (!targetProduct) return;
+
+    const updatedProducts = products.map((p) => {
+      if (p.id === productId) {
+        return {
+          ...p,
+          status: "active" as const,
+          updatedAt: new Date().toISOString(),
+          logs: [
+            ...p.logs,
+            {
+              employeeName: activeEmployee || "Employee",
+              action: "restored",
+              timestamp: new Date().toISOString(),
+            },
+          ],
+        };
+      }
+      return p;
+    });
+
+    const newLog: ActivityLog = {
+      id: "log_" + Date.now(),
+      branchId: activeBranch,
+      productId: productId,
+      productName: targetProduct.name,
+      brand: targetProduct.brand,
+      employeeName: activeEmployee || "Employee",
+      action: "restored",
+      timestamp: new Date().toISOString(),
+    };
+
+    const updatedLogs = [newLog, ...logs];
+    setProducts(updatedProducts);
+    setLogs(updatedLogs);
+
+    const actedProduct = updatedProducts.find((p) => p.id === productId);
+    syncBranchData(actedProduct ? [actedProduct] : [], [newLog]);
+  };
+
   // Quick deletion helper
   const deleteProduct = async (id: string) => {
     const targetProduct = products.find((p) => p.id === id);
@@ -2972,32 +3015,45 @@ export default function App() {
                                     
                                     {/* Action Buttons for this specific batch (Reverted to the old wide design with text) */}
                                     <div className="flex flex-col gap-1.5 w-full sm:w-auto min-w-[200px] sm:min-w-[280px]" onClick={(e) => e.stopPropagation()}>
-                                      {/* Row 1: Sold, Checked, Handled */}
+                                      {/* Row 1: Sold, Checked, Handled OR Restore */}
                                       <div className="flex gap-1.5 w-full">
-                                        <button
-                                          onClick={() => handleProductAction(b.id, "sold")}
-                                          title={t.actionSold}
-                                          className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white text-[9px] md:text-[10px] font-black shadow-md shadow-emerald-500/25 transition-all cursor-pointer"
-                                        >
-                                          <ShoppingCart className="w-3 h-3 md:w-3.5 md:h-3.5" />
-                                          <span>{t.actionSold}</span>
-                                        </button>
-                                        <button
-                                          onClick={() => handleProductAction(b.id, "shelf_checked")}
-                                          title={t.actionChecked}
-                                          className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-xl bg-white hover:bg-slate-50 active:scale-95 text-slate-600 text-[9px] md:text-[10px] font-bold border border-slate-200 shadow-sm transition-all cursor-pointer"
-                                        >
-                                          <CheckCircle className="w-3 h-3 md:w-3.5 md:h-3.5 text-emerald-500" />
-                                          <span>{t.actionChecked.split(" ")[0]}</span>
-                                        </button>
-                                        <button
-                                          onClick={() => handleProductAction(b.id, "handled")}
-                                          title={t.actionHandled}
-                                          className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-700 active:scale-95 text-white text-[9px] md:text-[10px] font-bold shadow-sm transition-all cursor-pointer"
-                                        >
-                                          <Check className="w-3 h-3 md:w-3.5 md:h-3.5 text-blue-400" />
-                                          <span>{t.actionHandled}</span>
-                                        </button>
+                                        {b.status !== "active" ? (
+                                          <button
+                                            onClick={() => handleProductRestore(b.id)}
+                                            title={locale === "ar" ? "إعادة المنتج للرف النشط" : "Restore to active shelf"}
+                                            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white text-[10px] font-black shadow-md shadow-blue-500/25 transition-all cursor-pointer"
+                                          >
+                                            <RefreshCw className="w-3.5 h-3.5" />
+                                            <span>{locale === "ar" ? "إرجاع للرف النشط" : "Restore to shelf"}</span>
+                                          </button>
+                                        ) : (
+                                          <>
+                                            <button
+                                              onClick={() => handleProductAction(b.id, "sold")}
+                                              title={t.actionSold}
+                                              className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white text-[9px] md:text-[10px] font-black shadow-md shadow-emerald-500/25 transition-all cursor-pointer"
+                                            >
+                                              <ShoppingCart className="w-3 h-3 md:w-3.5 md:h-3.5" />
+                                              <span>{t.actionSold}</span>
+                                            </button>
+                                            <button
+                                              onClick={() => handleProductAction(b.id, "shelf_checked")}
+                                              title={t.actionChecked}
+                                              className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-xl bg-white hover:bg-slate-50 active:scale-95 text-slate-600 text-[9px] md:text-[10px] font-bold border border-slate-200 shadow-sm transition-all cursor-pointer"
+                                            >
+                                              <CheckCircle className="w-3 h-3 md:w-3.5 md:h-3.5 text-emerald-500" />
+                                              <span>{t.actionChecked.split(" ")[0]}</span>
+                                            </button>
+                                            <button
+                                              onClick={() => handleProductAction(b.id, "handled")}
+                                              title={t.actionHandled}
+                                              className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-700 active:scale-95 text-white text-[9px] md:text-[10px] font-bold shadow-sm transition-all cursor-pointer"
+                                            >
+                                              <Check className="w-3 h-3 md:w-3.5 md:h-3.5 text-blue-400" />
+                                              <span>{t.actionHandled}</span>
+                                            </button>
+                                          </>
+                                        )}
                                       </div>
                                       {/* Row 2: Edit / Delete */}
                                       <div className="flex gap-1.5 w-full">
@@ -3063,6 +3119,8 @@ export default function App() {
                         return t.actionCreated;
                       case "deleted":
                         return locale === "ar" ? "تم الحذف" : "Deleted";
+                      case "restored":
+                        return locale === "ar" ? "تم الاسترجاع" : "Restored";
                       case "quantity_incremented":
                         return t.actionIncremented;
                       default:
@@ -3080,7 +3138,8 @@ export default function App() {
                         <span className={`w-2 h-2 rounded-full ${log.action === "created" ? "bg-blue-500" :
                           log.action === "sold" ? "bg-green-500" :
                             log.action === "shelf_checked" ? "bg-emerald-500" :
-                              log.action === "deleted" ? "bg-red-500" : "bg-purple-500"
+                              log.action === "deleted" ? "bg-red-500" :
+                                log.action === "restored" ? "bg-cyan-500" : "bg-purple-500"
                           }`} />
                         <div className="min-w-0 flex items-center gap-1.5 flex-wrap">
                           <span className="font-bold text-slate-800">

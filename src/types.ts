@@ -39,7 +39,7 @@ export interface ActivityLog {
   productName: string;
   brand: string;
   employeeName: string;
-  action: 'sold' | 'shelf_checked' | 'handled' | 'created' | 'quantity_incremented' | 'deleted' | 'image_updated';
+  action: 'sold' | 'shelf_checked' | 'handled' | 'created' | 'quantity_incremented' | 'deleted' | 'image_updated' | 'restored';
   timestamp: string;
 }
 

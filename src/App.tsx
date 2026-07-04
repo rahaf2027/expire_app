@@ -935,13 +935,18 @@ export default function App() {
 
   // Filter and search logic
   const filteredProducts = products.filter((p) => {
-    // If selectedFilter is not "archive", only show active products
-    if (selectedFilter !== "archive" && p.status !== "active") {
-      return false;
-    }
-    // If selectedFilter is "archive", only show non-active (sold, checked, handled) products
-    if (selectedFilter === "archive" && p.status === "active") {
-      return false;
+    // If selectedFilter is "database_all", show all active and archived products
+    if (selectedFilter === "database_all") {
+      // Keep product in list (do not filter by status)
+    } else {
+      // If selectedFilter is not "archive", only show active products
+      if (selectedFilter !== "archive" && p.status !== "active") {
+        return false;
+      }
+      // If selectedFilter is "archive", only show non-active (sold, checked, handled) products
+      if (selectedFilter === "archive" && p.status === "active") {
+        return false;
+      }
     }
 
     // Search filter
@@ -1317,9 +1322,9 @@ export default function App() {
                 <p className="text-3xl font-black text-blue-700 leading-none">{safeCount}</p>
               </div>
               <div
-                onClick={() => setSelectedFilter("all")}
+                onClick={() => setSelectedFilter("database_all")}
                 className={`p-4 rounded-xl flex flex-col justify-between cursor-pointer transition-all duration-200 hover:scale-[1.02] border ${
-                  selectedFilter === "all"
+                  selectedFilter === "database_all"
                     ? "bg-slate-200 border-slate-500 shadow-md ring-2 ring-slate-500/20"
                     : "bg-slate-100 border-slate-200 hover:bg-slate-200/50"
                 }`}
@@ -2769,7 +2774,8 @@ export default function App() {
               { id: "tomorrow", label: t.filterTomorrow },
               { id: "2days", label: t.filter2Days },
               { id: "1week", label: t.filter1Week },
-              { id: "archive", label: locale === "ar" ? "الأرشيف (المباعة/المكتملة)" : "Archive (Sold/Handled)" }
+              { id: "archive", label: locale === "ar" ? "الأرشيف (المباعة/المكتملة)" : "Archive (Sold/Handled)" },
+              { id: "database_all", label: locale === "ar" ? "كل المنتجات (نشطة + مؤرشفة)" : "All Products (Active + Archived)" }
             ].map((tab) => (
               <button
                 key={tab.id}

@@ -95,7 +95,10 @@ export async function syncBranchData(
       .from("products")
       .upsert(rows, { onConflict: "id" });
 
-    if (upsertErr) console.error("[DB] Upsert products error:", upsertErr);
+    if (upsertErr) {
+      console.error("[DB] Upsert products error:", upsertErr);
+      throw upsertErr;
+    }
   }
 
   // 2. Upsert activity logs (insert only, no delete)
@@ -115,7 +118,10 @@ export async function syncBranchData(
       .from("activity_logs")
       .upsert(logRows, { onConflict: "id", ignoreDuplicates: true });
 
-    if (logErr) console.error("[DB] Upsert logs error:", logErr);
+    if (logErr) {
+      console.error("[DB] Upsert logs error:", logErr);
+      throw logErr;
+    }
   }
 }
 

@@ -196,8 +196,10 @@ export default function App() {
   const syncBranchData = async (newProducts: Product[], newLogs: ActivityLog[]) => {
     try {
       await dbSyncBranchData(activeBranch, newProducts, newLogs);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Sync error:", err);
+      const errMsg = err?.message || JSON.stringify(err);
+      alert(locale === "ar" ? `فشل مزامنة البيانات مع السيرفر: ${errMsg}` : `Failed to sync data to server: ${errMsg}`);
     }
   };
 

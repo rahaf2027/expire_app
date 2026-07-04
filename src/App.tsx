@@ -39,7 +39,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { localization } from "./localization";
 import { sampleProducts, SampleProduct } from "./samples";
 import { Product, ActivityLog, Branch, MultilingualName } from "./types";
-import { fetchBranchData, syncBranchData as dbSyncBranchData, checkDatabaseHealth, deleteProductFromDb, deleteLogFromDb } from "./lib/database";
+import { fetchBranchData, syncBranchData as dbSyncBranchData, checkDatabaseHealth, deleteProductFromDb, deleteLogFromDb, clearAllLogsFromDb } from "./lib/database";
 import { analyzePackage, analyzeExpiry } from "./lib/gemini";
 
 const compressImage = (base64Str: string, maxDim = 600): Promise<string> => {
@@ -820,6 +820,25 @@ export default function App() {
     } catch (err: any) {
       console.error("Error deleting log from database:", err);
       alert(locale === "ar" ? `فشل حذف السجل من قاعدة البيانات: ${err?.message || err}` : `Failed to delete log from database: ${err?.message || err}`);
+    }
+  };
+
+  // Delete all activity logs
+  const clearAllLogs = async () => {
+    const confirmed = window.confirm(
+      locale === "ar"
+        ? "🚨 هل أنت متأكد تماماً من رغبتك في حذف جميع السجلات اليومية لهذا الفرع؟ لا يمكن التراجع عن هذا الإجراء!"
+        : "🚨 Are you sure you want to clear all activity logs for this branch? This action cannot be undone!"
+    );
+    if (!confirmed) return;
+
+    setLogs([]);
+
+    try {
+      await clearAllLogsFromDb(activeBranch);
+    } catch (err: any) {
+      console.error("Error clearing logs from database:", err);
+      alert(locale === "ar" ? `فشل مسح السجلات من قاعدة البيانات: ${err?.message || err}` : `Failed to clear logs from database: ${err?.message || err}`);
     }
   };
 
@@ -3165,13 +3184,22 @@ export default function App() {
             )}
           </div>
 
-          {/* Daily Action Logs list */}
-          {/* Daily Action Logs list */}
           <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs">
-            <h3 className="font-bold text-slate-800 text-sm font-display flex items-center gap-2 mb-3">
-              <FileText className="w-4.5 h-4.5 text-slate-500" />
-              {t.logTitle}
-            </h3>
+            <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-2">
+              <h3 className="font-bold text-slate-800 text-sm font-display flex items-center gap-2">
+                <FileText className="w-4.5 h-4.5 text-slate-500" />
+                {t.logTitle}
+              </h3>
+              {logs.length > 0 && (
+                <button
+                  onClick={clearAllLogs}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 text-[10px] font-bold border border-red-200 transition-all cursor-pointer"
+                >
+                  <Trash2 className="w-3 h-3 text-red-600" />
+                  <span>{locale === "ar" ? "مسح السجل بالكامل" : "Clear All Logs"}</span>
+                </button>
+              )}
+            </div>
 
             <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1">
               {logs.length === 0 ? (

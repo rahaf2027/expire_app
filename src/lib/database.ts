@@ -195,6 +195,18 @@ export async function deleteLogFromDb(logId: string): Promise<void> {
   }
 }
 
+// ─── Delete all activity logs for a branch ────────────────────────────────────
+export async function clearAllLogsFromDb(branchId: string): Promise<void> {
+  const { error } = await supabase
+    .from("activity_logs")
+    .delete()
+    .eq("branch_id", branchId);
+  if (error) {
+    console.error("[DB] Clear all logs error:", error);
+    throw error;
+  }
+}
+
 
 // ─── Health check: verify Supabase connection ─────────────────────────────────
 export async function checkDatabaseHealth(): Promise<boolean> {

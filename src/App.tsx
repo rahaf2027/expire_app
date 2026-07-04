@@ -42,6 +42,45 @@ import { Product, ActivityLog, Branch, MultilingualName } from "./types";
 import { fetchBranchData, syncBranchData as dbSyncBranchData, checkDatabaseHealth, deleteProductFromDb } from "./lib/database";
 import { analyzePackage, analyzeExpiry } from "./lib/gemini";
 
+const compressImage = (base64Str: string, maxDim = 600): Promise<string> => {
+  return new Promise((resolve) => {
+    if (!base64Str || !base64Str.startsWith("data:") || base64Str.length < 50000) {
+      resolve(base64Str);
+      return;
+    }
+    const img = new Image();
+    img.src = base64Str;
+    img.onload = () => {
+      let width = img.width;
+      let height = img.height;
+
+      if (width > maxDim || height > maxDim) {
+        if (width > height) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+      }
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", 0.7));
+      } else {
+        resolve(base64Str);
+      }
+    };
+    img.onerror = () => {
+      resolve(base64Str);
+    };
+  });
+};
+
 export default function App() {
   // Localization state
   const [locale, setLocale] = useState<string>(() => {
@@ -312,12 +351,25 @@ export default function App() {
   const capturePhoto = () => {
     if (videoRef.current) {
       const canvas = document.createElement("canvas");
-      canvas.width = videoRef.current.videoWidth || 640;
-      canvas.height = videoRef.current.videoHeight || 480;
+      let width = videoRef.current.videoWidth || 640;
+      let height = videoRef.current.videoHeight || 480;
+      const maxDim = 600;
+      if (width > maxDim || height > maxDim) {
+        if (width > height) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+      }
+      canvas.width = width;
+      canvas.height = height;
       const ctx = canvas.getContext("2d");
       if (ctx) {
         ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-        const base64 = canvas.toDataURL("image/jpeg");
+        // Compress JPEG to 0.7 quality directly at capture
+        const base64 = canvas.toDataURL("image/jpeg", 0.7);
         if (cameraStep === 1) {
           setPackagingImage(base64);
           triggerPackageOCR(base64, false, null);
@@ -359,8 +411,9 @@ export default function App() {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64 = reader.result as string;
+      reader.onloadend = async () => {
+        const rawBase64 = reader.result as string;
+        const base64 = await compressImage(rawBase64);
         if (step === 1) {
           setPackagingImage(base64);
           triggerPackageOCR(base64, false, null);
@@ -1673,8 +1726,9 @@ export default function App() {
                                   const file = e.target.files?.[0];
                                   if (file) {
                                     const reader = new FileReader();
-                                    reader.onloadend = () => {
-                                      setPackagingImage(reader.result as string);
+                                    reader.onloadend = async () => {
+                                      const base64 = await compressImage(reader.result as string);
+                                      setPackagingImage(base64);
                                     };
                                     reader.readAsDataURL(file);
                                   }
@@ -3250,8 +3304,9 @@ export default function App() {
                         const file = e.target.files?.[0];
                         if (file) {
                           const reader = new FileReader();
-                          reader.onloadend = () => {
-                            updateGroupProductsImage(reader.result as string);
+                          reader.onloadend = async () => {
+                            const base64 = await compressImage(reader.result as string);
+                            updateGroupProductsImage(base64);
                           };
                           reader.readAsDataURL(file);
                         }
@@ -3323,8 +3378,9 @@ export default function App() {
                         const file = e.target.files?.[0];
                         if (file) {
                           const reader = new FileReader();
-                          reader.onloadend = () => {
-                            triggerImageSearch(reader.result as string);
+                          reader.onloadend = async () => {
+                            const base64 = await compressImage(reader.result as string);
+                            triggerImageSearch(base64);
                           };
                           reader.readAsDataURL(file);
                         }

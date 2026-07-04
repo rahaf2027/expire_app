@@ -284,23 +284,23 @@ export default function App() {
       return p;
     });
 
-    const updatedLogs = [
-      {
-        id: "log_" + Date.now(),
-        branchId: activeBranch,
-        productId: productIdsToUpdate[0],
-        productName: viewingFullImageGroupProducts[0].name,
-        brand: viewingFullImageGroupProducts[0].brand,
-        employeeName: activeEmployee || "Employee",
-        action: "image_updated",
-        timestamp: new Date().toISOString(),
-      },
-      ...logs
-    ];
+    const newLog: ActivityLog = {
+      id: "log_" + Date.now(),
+      branchId: activeBranch,
+      productId: productIdsToUpdate[0],
+      productName: viewingFullImageGroupProducts[0].name,
+      brand: viewingFullImageGroupProducts[0].brand,
+      employeeName: activeEmployee || "Employee",
+      action: "image_updated",
+      timestamp: new Date().toISOString(),
+    };
+    const updatedLogs = [newLog, ...logs];
 
     setProducts(updatedProducts);
     setLogs(updatedLogs);
-    syncBranchData(updatedProducts, updatedLogs);
+    
+    const modifiedProducts = updatedProducts.filter(p => productIdsToUpdate.includes(p.id));
+    syncBranchData(modifiedProducts, [newLog]);
     
     // Update active full image preview and the local reference
     setViewingFullImage(newImageBase64);
@@ -558,7 +558,7 @@ export default function App() {
 
     setProducts(updatedProducts);
     setLogs(updatedLogs);
-    syncBranchData(updatedProducts, updatedLogs);
+    syncBranchData([createdProduct], [newLog]);
 
     // reset forms
     resetForms();
@@ -601,7 +601,8 @@ export default function App() {
     const updatedLogs = [newLog, ...logs];
     setProducts(updatedProducts);
     setLogs(updatedLogs);
-    syncBranchData(updatedProducts, updatedLogs);
+    const mergedProduct = updatedProducts.find(p => p.id === duplicateFound.id);
+    syncBranchData(mergedProduct ? [mergedProduct] : [], [newLog]);
 
     resetForms();
   };
@@ -669,19 +670,36 @@ export default function App() {
     const updatedLogs = [newLog, ...logs];
     setProducts(updatedProducts);
     setLogs(updatedLogs);
-    syncBranchData(updatedProducts, updatedLogs);
+    
+    const actedProduct = updatedProducts.find((p) => p.id === productId);
+    syncBranchData(actedProduct ? [actedProduct] : [], [newLog]);
   };
 
   // Quick deletion helper
   const deleteProduct = async (id: string) => {
+    const targetProduct = products.find((p) => p.id === id);
     const updated = products.filter((p) => p.id !== id);
     setProducts(updated);
     setDeletingProductId(null);
     if (viewingProduct?.id === id) setViewingProduct(null);
-    
+
+    const newLog: ActivityLog = {
+      id: "log_" + Date.now(),
+      branchId: activeBranch,
+      productId: id,
+      productName: targetProduct?.name || "Product",
+      brand: targetProduct?.brand || "",
+      employeeName: activeEmployee || "Employee",
+      action: "deleted",
+      timestamp: new Date().toISOString(),
+    };
+
+    const updatedLogs = [newLog, ...logs];
+    setLogs(updatedLogs);
+
     try {
       await deleteProductFromDb(id);
-      await syncBranchData(updated, logs);
+      await syncBranchData([], [newLog]);
     } catch (err) {
       console.error("Error deleting product from database:", err);
     }
@@ -760,7 +778,8 @@ export default function App() {
     const updatedLogs = [newLog, ...logs];
     setProducts(updatedProducts);
     setLogs(updatedLogs);
-    syncBranchData(updatedProducts, updatedLogs);
+    const editedProd = updatedProducts.find(p => p.id === editingProduct.id);
+    syncBranchData(editedProd ? [editedProd] : [], [newLog]);
     cancelEditing();
   };
 
@@ -3042,6 +3061,8 @@ export default function App() {
                         return t.actionHandled;
                       case "created":
                         return t.actionCreated;
+                      case "deleted":
+                        return locale === "ar" ? "تم الحذف" : "Deleted";
                       case "quantity_incremented":
                         return t.actionIncremented;
                       default:
@@ -3058,7 +3079,8 @@ export default function App() {
                       <div className="flex items-center gap-2 min-w-0">
                         <span className={`w-2 h-2 rounded-full ${log.action === "created" ? "bg-blue-500" :
                           log.action === "sold" ? "bg-green-500" :
-                            log.action === "shelf_checked" ? "bg-emerald-500" : "bg-purple-500"
+                            log.action === "shelf_checked" ? "bg-emerald-500" :
+                              log.action === "deleted" ? "bg-red-500" : "bg-purple-500"
                           }`} />
                         <div className="min-w-0 flex items-center gap-1.5 flex-wrap">
                           <span className="font-bold text-slate-800">

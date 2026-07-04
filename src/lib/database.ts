@@ -5,6 +5,45 @@
 import { supabase } from "./supabaseClient";
 import type { Product, ActivityLog } from "../types";
 
+const compressImage = (base64Str: string | null, maxDim = 600): Promise<string | null> => {
+  return new Promise((resolve) => {
+    if (!base64Str || !base64Str.startsWith("data:") || base64Str.length < 50000) {
+      resolve(base64Str);
+      return;
+    }
+    const img = new Image();
+    img.src = base64Str;
+    img.onload = () => {
+      let width = img.width;
+      let height = img.height;
+
+      if (width > maxDim || height > maxDim) {
+        if (width > height) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+      }
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", 0.7));
+      } else {
+        resolve(base64Str);
+      }
+    };
+    img.onerror = () => {
+      resolve(base64Str);
+    };
+  });
+};
+
 // ─── Fetch products + logs for a branch ───────────────────────────────────────
 export async function fetchBranchData(branchId: string): Promise<{ products: Product[]; logs: ActivityLog[] }> {
   const [productsRes, logsRes] = await Promise.all([
@@ -72,24 +111,31 @@ export async function syncBranchData(
 ): Promise<void> {
   // 1. Upsert all products
   if (products.length > 0) {
-    const rows = products.map((p) => ({
-      id: p.id,
-      branch_id: branchId,
-      name: p.name,
-      brand: p.brand,
-      multilingual_names: JSON.stringify(p.multilingualNames || []),
-      expiry_date: p.expiryDate,
-      image_url: p.imageUrl || null,
-      expiry_image_url: p.expiryImageUrl || null,
-      status: p.status,
-      quantity: p.quantity,
-      quantity_unit: p.quantityUnit || 'pcs',
-      units_per_carton: p.unitsPerCarton || 1,
-      loose_units: p.looseUnits || 0,
-      created_at: p.createdAt,
-      updated_at: p.updatedAt,
-      logs: JSON.stringify(p.logs || []),
-    }));
+    const rows = await Promise.all(
+      products.map(async (p) => {
+        const compressedImg = p.imageUrl ? await compressImage(p.imageUrl) : null;
+        const compressedExpiryImg = p.expiryImageUrl ? await compressImage(p.expiryImageUrl) : null;
+        
+        return {
+          id: p.id,
+          branch_id: branchId,
+          name: p.name,
+          brand: p.brand,
+          multilingual_names: JSON.stringify(p.multilingualNames || []),
+          expiry_date: p.expiryDate,
+          image_url: compressedImg,
+          expiry_image_url: compressedExpiryImg,
+          status: p.status,
+          quantity: p.quantity,
+          quantity_unit: p.quantityUnit || 'pcs',
+          units_per_carton: p.unitsPerCarton || 1,
+          loose_units: p.looseUnits || 0,
+          created_at: p.createdAt,
+          updated_at: p.updatedAt,
+          logs: JSON.stringify(p.logs || []),
+        };
+      })
+    );
 
     const { error: upsertErr } = await supabase
       .from("products")

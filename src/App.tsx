@@ -113,6 +113,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedFilter, setSelectedFilter] = useState<string>("all");
   const [notifTime, setNotifTime] = useState("08:00");
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [showNotificationToast, setShowNotificationToast] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
   const [notifOpen, setNotifOpen] = useState(false);
@@ -1295,7 +1296,11 @@ export default function App() {
             })()}
 
             {/* User Avatar Badge */}
-            <div className="w-9 h-9 rounded-full bg-slate-200 border border-slate-300 shadow-2xs flex items-center justify-center text-slate-700 font-bold text-xs shrink-0 select-none" title={activeEmployee}>
+            <div
+              onClick={() => setIsProfileOpen(true)}
+              className="w-9 h-9 rounded-full bg-slate-200 border border-slate-300 shadow-2xs flex items-center justify-center text-slate-700 hover:text-blue-600 hover:border-blue-300 hover:bg-blue-50 transition-all duration-205 font-bold text-xs shrink-0 select-none cursor-pointer"
+              title={activeEmployee}
+            >
               {activeEmployee ? activeEmployee.trim().slice(0, 2).toUpperCase() : "JD"}
             </div>
           </div>
@@ -1424,42 +1429,94 @@ export default function App() {
             </div>
           </div>
 
-          {/* Shift & Notification Config */}
-          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2 font-display mb-3">
-              <Bell className="w-4 h-4 text-blue-600" />
-              {t.notifTitle}
-            </h3>
+          {/* Daily Action Logs list (Moved from bottom to left column) */}
+          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex flex-col min-h-[300px]">
+            <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-2">
+              <h3 className="font-bold text-slate-800 text-sm font-display flex items-center gap-2">
+                <FileText className="w-4.5 h-4.5 text-slate-500" />
+                {t.logTitle}
+              </h3>
+              {logs.length > 0 && (
+                <button
+                  onClick={clearAllLogs}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 text-[10px] font-bold border border-red-200 transition-all cursor-pointer"
+                >
+                  <Trash2 className="w-3 h-3 text-red-600" />
+                  <span>{locale === "ar" ? "مسح" : "Clear"}</span>
+                </button>
+              )}
+            </div>
 
-            <div className="space-y-4">
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/40 text-[11px] leading-relaxed text-slate-500 font-medium">
-                {t.appDescription}
-              </div>
+            <div className="space-y-2 max-h-[350px] overflow-y-auto pr-1 flex-1">
+              {logs.length === 0 ? (
+                <p className="text-xs text-slate-400 italic text-center py-8">{t.logEmpty}</p>
+              ) : (
+                logs.map((log) => {
+                  const dateStr = new Date(log.timestamp).toLocaleTimeString(locale, {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  });
 
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1.5">{t.notifTimeLabel}</label>
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <span className="absolute inset-y-0 left-3 flex items-center text-slate-400">
-                      <Clock className="w-4 h-4" />
-                    </span>
-                    <input
-                      type="time"
-                      value={notifTime}
-                      onChange={(e) => setNotifTime(e.target.value)}
-                      className="w-full rounded-xl border border-slate-200 pl-10 pr-4 py-2 text-xs font-bold focus:border-blue-500 focus:outline-none bg-slate-50 focus:bg-white transition-all"
-                    />
-                  </div>
+                  const getActionLabel = (action: string) => {
+                    switch (action) {
+                      case "sold":
+                        return t.actionSold;
+                      case "shelf_checked":
+                        return t.actionChecked.split(" ")[0];
+                      case "handled":
+                        return t.actionHandled;
+                      case "created":
+                        return t.actionCreated;
+                      case "deleted":
+                        return locale === "ar" ? "تم الحذف" : "Deleted";
+                      case "restored":
+                        return locale === "ar" ? "تم الاسترجاع" : "Restored";
+                      case "quantity_incremented":
+                        return t.actionIncremented;
+                      default:
+                        return action;
+                    }
+                  };
 
-                  <button
-                    onClick={simulateMorningAlarm}
-                    className="bg-blue-600 hover:bg-blue-700 transition-all text-xs font-bold text-white px-3 py-2 rounded-xl flex items-center gap-1.5 shrink-0 shadow-xs"
-                  >
-                    <Bell className="w-4 h-4 text-amber-300" />
-                    <span>{t.notifBtnTest.split(" ")[1] || "محاكاة"}</span>
-                  </button>
-                </div>
-              </div>
+                  return (
+                    <div
+                      key={log.id}
+                      className="flex flex-col gap-1.5 p-2.5 bg-slate-50/70 border border-slate-100 rounded-xl text-xs"
+                      dir={locale === "ar" ? "rtl" : "ltr"}
+                    >
+                      <div className="flex items-center justify-between min-w-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className={`w-2 h-2 rounded-full shrink-0 ${log.action === "created" ? "bg-blue-500" :
+                            log.action === "sold" ? "bg-green-500" :
+                              log.action === "shelf_checked" ? "bg-emerald-500" :
+                                log.action === "deleted" ? "bg-red-500" :
+                                  log.action === "restored" ? "bg-cyan-500" : "bg-purple-500"
+                            }`} />
+                          <span className="font-bold text-slate-800 truncate">
+                            {log.brand} - {log.productName}
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => deleteLog(log.id)}
+                          title={locale === "ar" ? "حذف السجل" : "Delete Log"}
+                          className="p-1 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all cursor-pointer shrink-0"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      
+                      <div className="flex items-center justify-between text-[10px] text-slate-400 font-bold border-t border-slate-200/40 pt-1 mt-0.5">
+                        <span className="text-slate-500 bg-slate-100/80 px-1.5 py-0.5 rounded-md font-medium text-[9px] border border-slate-200/50">
+                          {getActionLabel(log.action)}
+                        </span>
+                        <span className="font-mono">
+                          {t.logFormat.replace("{employee}", log.employeeName).replace("{time}", dateStr)}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
 
@@ -3184,94 +3241,7 @@ export default function App() {
             )}
           </div>
 
-          <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs">
-            <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-2">
-              <h3 className="font-bold text-slate-800 text-sm font-display flex items-center gap-2">
-                <FileText className="w-4.5 h-4.5 text-slate-500" />
-                {t.logTitle}
-              </h3>
-              {logs.length > 0 && (
-                <button
-                  onClick={clearAllLogs}
-                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 text-[10px] font-bold border border-red-200 transition-all cursor-pointer"
-                >
-                  <Trash2 className="w-3 h-3 text-red-600" />
-                  <span>{locale === "ar" ? "مسح السجل بالكامل" : "Clear All Logs"}</span>
-                </button>
-              )}
-            </div>
 
-            <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1">
-              {logs.length === 0 ? (
-                <p className="text-xs text-slate-400 italic text-center py-4">{t.logEmpty}</p>
-              ) : (
-                logs.map((log) => {
-                  const dateStr = new Date(log.timestamp).toLocaleTimeString(locale, {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  });
-
-                  const getActionLabel = (action: string) => {
-                    switch (action) {
-                      case "sold":
-                        return t.actionSold;
-                      case "shelf_checked":
-                        return t.actionChecked.split(" ")[0];
-                      case "handled":
-                        return t.actionHandled;
-                      case "created":
-                        return t.actionCreated;
-                      case "deleted":
-                        return locale === "ar" ? "تم الحذف" : "Deleted";
-                      case "restored":
-                        return locale === "ar" ? "تم الاسترجاع" : "Restored";
-                      case "quantity_incremented":
-                        return t.actionIncremented;
-                      default:
-                        return action;
-                    }
-                  };
-
-                  return (
-                    <div
-                      key={log.id}
-                      className="flex items-center justify-between p-2.5 bg-slate-50/70 border border-slate-100 rounded-xl text-xs"
-                      dir={locale === "ar" ? "rtl" : "ltr"}
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className={`w-2 h-2 rounded-full ${log.action === "created" ? "bg-blue-500" :
-                          log.action === "sold" ? "bg-green-500" :
-                            log.action === "shelf_checked" ? "bg-emerald-500" :
-                              log.action === "deleted" ? "bg-red-500" :
-                                log.action === "restored" ? "bg-cyan-500" : "bg-purple-500"
-                          }`} />
-                        <div className="min-w-0 flex items-center gap-1.5 flex-wrap">
-                          <span className="font-bold text-slate-800">
-                            {log.brand} - {log.productName}
-                          </span>
-                          <span className="text-slate-500 bg-slate-100/80 px-1.5 py-0.5 rounded-md font-medium text-[10px] border border-slate-200/50">
-                            {getActionLabel(log.action)}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <div className="text-[10px] text-slate-400 font-bold font-mono">
-                          {t.logFormat.replace("{employee}", log.employeeName).replace("{time}", dateStr)}
-                        </div>
-                        <button
-                          onClick={() => deleteLog(log.id)}
-                          title={locale === "ar" ? "حذف السجل" : "Delete Log"}
-                          className="p-1 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all cursor-pointer"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
 
         </div>
 
@@ -3376,6 +3346,105 @@ export default function App() {
                 </div>
               )}
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Employee Profile & Daily Alerts Modal */}
+      <AnimatePresence>
+        {isProfileOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              className="bg-white rounded-3xl max-w-md w-full overflow-hidden shadow-2xl border border-slate-200 p-6 space-y-6"
+            >
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h3 className="font-bold text-slate-800 text-sm font-display flex items-center gap-2">
+                  <User className="w-5 h-5 text-blue-600" />
+                  {locale === "ar" ? "الملف الشخصي وإعدادات التنبيهات" : "Profile & Alerts Settings"}
+                </h3>
+                <button
+                  onClick={() => setIsProfileOpen(false)}
+                  className="p-1 hover:bg-slate-150 rounded-lg text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Profile Details */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-200/50">
+                  <div className="w-12 h-12 rounded-full bg-blue-100 border border-blue-200 text-blue-700 flex items-center justify-center font-bold text-lg">
+                    {activeEmployee ? activeEmployee.trim().slice(0, 2).toUpperCase() : "JD"}
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-xs text-slate-400 uppercase tracking-wider">{locale === "ar" ? "الموظف النشط حالياً" : "Active Employee"}</h4>
+                    <p className="font-black text-slate-850 text-sm mt-0.5">{activeEmployee || "Employee"}</p>
+                  </div>
+                </div>
+
+                {/* Edit Employee Name Input */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1.5">{t.activeEmployee}</label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-3 flex items-center text-slate-400">
+                      <User className="w-4 h-4 text-blue-600" />
+                    </span>
+                    <input
+                      type="text"
+                      value={activeEmployee}
+                      onChange={(e) => setActiveEmployee(e.target.value)}
+                      placeholder={t.employeePlaceholder}
+                      className="w-full rounded-xl border border-slate-200 pl-10 pr-4 py-2.5 text-xs font-bold focus:border-blue-500 focus:outline-none bg-slate-50 focus:bg-white transition-all"
+                    />
+                  </div>
+                </div>
+
+                {/* Shift & Notification Config (Moved Here) */}
+                <div className="border-t border-slate-100 pt-4 space-y-3">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
+                    <Bell className="w-4 h-4 text-blue-600" />
+                    {t.notifTitle}
+                  </h4>
+                  
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/40 text-[11px] leading-relaxed text-slate-500 font-medium">
+                    {t.appDescription}
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1.5">{t.notifTimeLabel}</label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <span className="absolute inset-y-0 left-3 flex items-center text-slate-400">
+                          <Clock className="w-4 h-4" />
+                        </span>
+                        <input
+                          type="time"
+                          value={notifTime}
+                          onChange={(e) => setNotifTime(e.target.value)}
+                          className="w-full rounded-xl border border-slate-200 pl-10 pr-4 py-2 text-xs font-bold focus:border-blue-500 focus:outline-none bg-slate-50 focus:bg-white transition-all"
+                        />
+                      </div>
+
+                      <button
+                        onClick={simulateMorningAlarm}
+                        className="bg-blue-600 hover:bg-blue-700 transition-all text-xs font-bold text-white px-3 py-2 rounded-xl flex items-center gap-1.5 shrink-0 shadow-xs"
+                      >
+                        <Bell className="w-4 h-4 text-amber-300" />
+                        <span>{t.notifBtnTest.split(" ")[1] || "محاكاة"}</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>

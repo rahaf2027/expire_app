@@ -11,7 +11,8 @@ export async function fetchBranchData(branchId: string): Promise<{ products: Pro
     supabase
       .from("products")
       .select("*")
-      .eq("branch_id", branchId),
+      .eq("branch_id", branchId)
+      .order("created_at", { ascending: false }),
     supabase
       .from("activity_logs")
       .select("*")
@@ -102,7 +103,7 @@ export async function syncBranchData(
       .from("products")
       .delete()
       .eq("branch_id", branchId)
-      .not("id", "in", `(${incomingIds.map((id) => `"${id}"`).join(",")})`);
+      .not("id", "in", `(${incomingIds.join(",")})`);
 
     if (deleteErr) console.error("[DB] Delete stale products error:", deleteErr);
   } else {

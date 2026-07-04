@@ -101,7 +101,7 @@ export default function App() {
 
   // Camera capture hooks
   const [cameraActive, setCameraActive] = useState(false);
-  const [cameraStep, setCameraStep] = useState<1 | 2 | null>(null);
+  const [cameraStep, setCameraStep] = useState<1 | 2 | 3 | 4 | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   // Duplicate Check Overlay states
@@ -121,6 +121,20 @@ export default function App() {
 
   // Product Detail Modal
   const [viewingProduct, setViewingProduct] = useState<Product | null>(null);
+
+  // Fullscreen WhatsApp-like image preview
+  const [viewingFullImage, setViewingFullImage] = useState<string | null>(null);
+  const [viewingFullImageGroupProducts, setViewingFullImageGroupProducts] = useState<Product[]>([]);
+
+  // WhatsApp-like Camera facing mode and flash status
+  const [facingMode, setFacingMode] = useState<"user" | "environment">("environment");
+  const [flashOn, setFlashOn] = useState(false);
+
+  // Image search mode
+  const [isSearchingByImage, setIsSearchingByImage] = useState(false);
+
+  // Registration warning/error state
+  const [registrationError, setRegistrationError] = useState<string | null>(null);
 
   // Delete confirmation
   const [deletingProductId, setDeletingProductId] = useState<string | null>(null);
@@ -179,13 +193,21 @@ export default function App() {
     localStorage.setItem("expiry_tracker_locale", locale);
   }, [locale]);
 
-  // Camera handling helper
-  const startCamera = async (step: 1 | 2) => {
+  // Camera handling helper with facing mode parameter
+  const startCamera = async (step: 1 | 2 | 3 | 4, currentFacingMode = facingMode) => {
     try {
       setCameraStep(step);
       setCameraActive(true);
+      setFlashOn(false); // Reset flash
+
+      // Stop existing stream tracks first
+      if (videoRef.current && videoRef.current.srcObject) {
+        const stream = videoRef.current.srcObject as MediaStream;
+        stream.getTracks().forEach((track) => track.stop());
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" },
+        video: { facingMode: currentFacingMode },
       });
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -198,6 +220,36 @@ export default function App() {
     }
   };
 
+  const toggleFacingMode = () => {
+    const nextMode = facingMode === "environment" ? "user" : "environment";
+    setFacingMode(nextMode);
+    if (cameraStep) {
+      startCamera(cameraStep, nextMode);
+    }
+  };
+
+  const toggleFlash = async () => {
+    if (videoRef.current && videoRef.current.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      const track = stream.getVideoTracks()[0];
+      if (track) {
+        try {
+          const capabilities = track.getCapabilities() as any;
+          if (capabilities.torch !== undefined) {
+            await track.applyConstraints({
+              advanced: [{ torch: !flashOn } as any]
+            });
+            setFlashOn(!flashOn);
+          } else {
+            alert(locale === "ar" ? "الفلاش غير مدعوم على هذه الكاميرا." : "Flash not supported on this camera.");
+          }
+        } catch (e) {
+          console.error("Failed to toggle flash:", e);
+        }
+      }
+    }
+  };
+
   const stopCamera = () => {
     if (videoRef.current && videoRef.current.srcObject) {
       const stream = videoRef.current.srcObject as MediaStream;
@@ -206,6 +258,55 @@ export default function App() {
     }
     setCameraActive(false);
     setCameraStep(null);
+    setFlashOn(false);
+  };
+
+  const updateGroupProductsImage = (newImageBase64: string) => {
+    if (viewingFullImageGroupProducts.length === 0) return;
+    
+    const productIdsToUpdate = viewingFullImageGroupProducts.map(p => p.id);
+    const updatedProducts = products.map((p) => {
+      if (productIdsToUpdate.includes(p.id)) {
+        return {
+          ...p,
+          imageUrl: newImageBase64,
+          updatedAt: new Date().toISOString(),
+          logs: [
+            ...p.logs,
+            {
+              employeeName: activeEmployee || "Employee",
+              action: "image_updated",
+              timestamp: new Date().toISOString(),
+            }
+          ]
+        };
+      }
+      return p;
+    });
+
+    const updatedLogs = [
+      {
+        id: "log_" + Date.now(),
+        branchId: activeBranch,
+        productId: productIdsToUpdate[0],
+        productName: viewingFullImageGroupProducts[0].name,
+        brand: viewingFullImageGroupProducts[0].brand,
+        employeeName: activeEmployee || "Employee",
+        action: "image_updated",
+        timestamp: new Date().toISOString(),
+      },
+      ...logs
+    ];
+
+    setProducts(updatedProducts);
+    setLogs(updatedLogs);
+    syncBranchData(updatedProducts, updatedLogs);
+    
+    // Update active full image preview and the local reference
+    setViewingFullImage(newImageBase64);
+    setViewingFullImageGroupProducts(
+      viewingFullImageGroupProducts.map(p => ({ ...p, imageUrl: newImageBase64 }))
+    );
   };
 
   const capturePhoto = () => {
@@ -223,9 +324,33 @@ export default function App() {
         } else if (cameraStep === 2) {
           setExpiryImage(base64);
           triggerExpiryOCR(base64, false, null);
+        } else if (cameraStep === 3) {
+          triggerImageSearch(base64);
+        } else if (cameraStep === 4) {
+          updateGroupProductsImage(base64);
         }
       }
       stopCamera();
+    }
+  };
+
+  // Image search trigger
+  const triggerImageSearch = async (imageBase64: string) => {
+    setOcrStatus("analyzing");
+    try {
+      const data = await analyzePackage(imageBase64);
+      if (data.name) {
+        setSearchQuery(data.name);
+        setToastMessage(locale === "ar" ? `تم البحث بـ: ${data.name}` : `Searched for: ${data.name}`);
+        setShowNotificationToast(true);
+        setTimeout(() => setShowNotificationToast(false), 3000);
+      }
+    } catch (err) {
+      console.error("Visual search error:", err);
+      alert(locale === "ar" ? "تعذر تحديد المنتج من الصورة." : "Could not identify product from image.");
+    } finally {
+      setOcrStatus("");
+      setIsSearchingByImage(false);
     }
   };
 
@@ -345,9 +470,13 @@ export default function App() {
       return;
     }
 
+    const qty = Number(quantityInput) || 1;
+    const unitsPer = Number(unitsPerCartonInput) || 1;
+    const loose = Number(looseUnitsInput) || 0;
+
     const totalQuantity = quantityUnitInput === "cartons"
-      ? (quantityInput * unitsPerCartonInput) + looseUnitsInput
-      : quantityInput;
+      ? (qty * unitsPer) + loose
+      : qty;
 
     const proposedProduct = {
       name: extractedName,
@@ -358,26 +487,44 @@ export default function App() {
       status: "active" as const,
       quantity: totalQuantity,
       quantityUnit: quantityUnitInput,
-      unitsPerCarton: quantityUnitInput === "cartons" ? unitsPerCartonInput : 1,
-      looseUnits: quantityUnitInput === "cartons" ? looseUnitsInput : 0,
+      unitsPerCarton: quantityUnitInput === "cartons" ? unitsPer : 1,
+      looseUnits: quantityUnitInput === "cartons" ? loose : 0,
     };
 
     // Duplicate Check: Same Name, Same Brand, Same Expiry Date & Active
+    const isNameMatch = (p1: any, p2: any) => {
+      const n1 = p1.name.trim().toLowerCase();
+      const n2 = p2.name.trim().toLowerCase();
+      const b1 = (p1.brand || "").trim().toLowerCase();
+      const b2 = (p2.brand || "").trim().toLowerCase();
+      
+      if (b1 !== b2) return false;
+      if (n1 === n2) return true;
+      
+      const p1Names = (p1.multilingualNames || []).map((m: any) => m.name.trim().toLowerCase());
+      const p2Names = (p2.multilingualNames || []).map((m: any) => m.name.trim().toLowerCase());
+      
+      return p1Names.some((name: string) => p2Names.includes(name)) || p1Names.includes(n2) || p2Names.includes(n1);
+    };
+
     const match = products.find(
       (p) =>
         p.status === "active" &&
-        p.name.trim().toLowerCase() === proposedProduct.name.trim().toLowerCase() &&
-        p.expiryDate === proposedProduct.expiryDate
+        p.expiryDate === proposedProduct.expiryDate &&
+        isNameMatch(p, proposedProduct)
     );
 
     if (match) {
-      // Trigger Duplicate Flavor comparison Dialog!
-      setDuplicateFound(match);
-      setPendingProduct(proposedProduct);
-    } else {
-      // Save directly
-      saveNewProduct(proposedProduct);
+      setRegistrationError(
+        locale === "ar"
+          ? `هذا المنتج (${proposedProduct.name}) موجود بالفعل بنفس تاريخ الصلاحية (${finalDate.split("-").reverse().join(".")})!`
+          : `This product (${proposedProduct.name}) already exists with the same expiry date (${finalDate.split("-").reverse().join(".")})!`
+      );
+      return; // Block adding
     }
+
+    // Save directly
+    saveNewProduct(proposedProduct);
   };
 
   const saveNewProduct = (newProd: any) => {
@@ -481,6 +628,7 @@ export default function App() {
     setRegisterStep(1);
     setDuplicateFound(null);
     setPendingProduct(null);
+    setRegistrationError(null);
   };
 
   // Handle Product Status Clicks (🛒 Sold, 👁️ Checked, ✅ Handled)
@@ -492,7 +640,7 @@ export default function App() {
       if (p.id === productId) {
         return {
           ...p,
-          status: action === "shelf_checked" ? ("active" as const) : ("handled" as const), // shelf check keeps active but updates checked stamp
+          status: "handled" as const, // any action (sold, shelf_checked, handled) sets status to handled so it is removed from the active list
           updatedAt: new Date().toISOString(),
           logs: [
             ...p.logs,
@@ -566,9 +714,13 @@ export default function App() {
   const saveEditedProduct = () => {
     if (!editingProduct) return;
 
+    const qty = Number(editingQuantity) || 1;
+    const unitsPer = Number(editingUnitsPerCarton) || 1;
+    const loose = Number(editingLooseUnits) || 0;
+
     const totalQuantity = editingQuantityUnit === "cartons"
-      ? (editingQuantity * editingUnitsPerCarton) + editingLooseUnits
-      : editingQuantity;
+      ? (qty * unitsPer) + loose
+      : qty;
 
     const updatedProducts = products.map((p) => {
       if (p.id === editingProduct.id) {
@@ -579,8 +731,8 @@ export default function App() {
           expiryDate: editingExpiryDate,
           quantity: totalQuantity,
           quantityUnit: editingQuantityUnit,
-          unitsPerCarton: editingQuantityUnit === "cartons" ? editingUnitsPerCarton : 1,
-          looseUnits: editingQuantityUnit === "cartons" ? editingLooseUnits : 0,
+          unitsPerCarton: editingQuantityUnit === "cartons" ? unitsPer : 1,
+          looseUnits: editingQuantityUnit === "cartons" ? loose : 0,
           multilingualNames: editingMultilingual,
           updatedAt: new Date().toISOString(),
         };
@@ -719,6 +871,8 @@ export default function App() {
     const matchesSearch =
       p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       p.brand.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      p.expiryDate.includes(searchQuery) ||
+      p.expiryDate.split("-").reverse().join(".").includes(searchQuery) ||
       p.multilingualNames.some((m) => m.name.toLowerCase().includes(searchQuery.toLowerCase()));
 
     if (!matchesSearch) return false;
@@ -729,9 +883,47 @@ export default function App() {
     if (selectedFilter === "tomorrow") return days === 1;
     if (selectedFilter === "2days") return days >= 0 && days <= 2;
     if (selectedFilter === "1week") return days >= 0 && days <= 7;
+    if (selectedFilter === "expired") return days < 0;
+    if (selectedFilter === "critical") return days >= 0 && days <= 3;
+    if (selectedFilter === "safe") return days > 7;
 
     return true;
   });
+
+  // Group products by lowercase name and brand to aggregate batches
+  const sortedProducts = [...filteredProducts].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+
+  const groupedProducts: {
+    [key: string]: {
+      name: string;
+      brand: string;
+      imageUrl: string;
+      multilingualNames: MultilingualName[];
+      createdAt: string;
+      batches: Product[];
+    }
+  } = {};
+
+  sortedProducts.forEach((p) => {
+    const key = `${p.name.trim().toLowerCase()}_${p.brand.trim().toLowerCase()}`;
+    if (!groupedProducts[key]) {
+      groupedProducts[key] = {
+        name: p.name,
+        brand: p.brand,
+        imageUrl: p.imageUrl || "",
+        multilingualNames: p.multilingualNames || [],
+        createdAt: p.createdAt,
+        batches: [],
+      };
+    }
+    groupedProducts[key].batches.push(p);
+  });
+
+  const groupedProductsList = Object.values(groupedProducts).sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
 
   return (
     <div className="min-h-screen pb-16 flex flex-col antialiased bg-slate-50 text-slate-900" dir={locale === "ar" ? "rtl" : "ltr"}>
@@ -884,7 +1076,14 @@ export default function App() {
                                 const isExpired = days < 0;
                                 const isCritical = days >= 0 && days <= 1;
                                 return (
-                                  <div key={p.id} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition-colors">
+                                  <div
+                                    key={p.id}
+                                    onClick={() => {
+                                      setViewingProduct(p);
+                                      setNotifOpen(false);
+                                    }}
+                                    className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition-colors cursor-pointer"
+                                  >
                                     <div className={`w-2 h-2 rounded-full shrink-0 ${isExpired ? "bg-red-500" : isCritical ? "bg-orange-500" : "bg-yellow-400"}`} />
                                     <div className="flex-1 min-w-0">
                                       <p className="text-xs font-bold text-slate-800 truncate text-left">{p.name}</p>
@@ -1007,19 +1206,47 @@ export default function App() {
             </h3>
 
             <div className="grid grid-cols-2 gap-3">
-              <div className="bg-red-50 border border-red-100 p-4 rounded-xl flex flex-col justify-between">
+              <div
+                onClick={() => setSelectedFilter(selectedFilter === "expired" ? "all" : "expired")}
+                className={`p-4 rounded-xl flex flex-col justify-between cursor-pointer transition-all duration-200 hover:scale-[1.02] border ${
+                  selectedFilter === "expired"
+                    ? "bg-red-100 border-red-500 shadow-md ring-2 ring-red-500/20"
+                    : "bg-red-50 border-red-100 hover:bg-red-100/50"
+                }`}
+              >
                 <p className="text-[10px] font-bold text-red-600 uppercase tracking-wider mb-1">{t.statsExpired}</p>
                 <p className="text-3xl font-black text-red-700 leading-none">{expiredCount}</p>
               </div>
-              <div className="bg-orange-50 border border-orange-100 p-4 rounded-xl flex flex-col justify-between">
+              <div
+                onClick={() => setSelectedFilter(selectedFilter === "critical" ? "all" : "critical")}
+                className={`p-4 rounded-xl flex flex-col justify-between cursor-pointer transition-all duration-200 hover:scale-[1.02] border ${
+                  selectedFilter === "critical"
+                    ? "bg-orange-100 border-orange-500 shadow-md ring-2 ring-orange-500/20"
+                    : "bg-orange-50 border-orange-100 hover:bg-orange-100/50"
+                }`}
+              >
                 <p className="text-[10px] font-bold text-orange-600 uppercase tracking-wider mb-1">{t.statsWarning}</p>
                 <p className="text-3xl font-black text-orange-700 leading-none">{criticalCount}</p>
               </div>
-              <div className="bg-blue-50 border border-blue-100 p-4 rounded-xl flex flex-col justify-between">
+              <div
+                onClick={() => setSelectedFilter(selectedFilter === "safe" ? "all" : "safe")}
+                className={`p-4 rounded-xl flex flex-col justify-between cursor-pointer transition-all duration-200 hover:scale-[1.02] border ${
+                  selectedFilter === "safe"
+                    ? "bg-blue-100 border-blue-500 shadow-md ring-2 ring-blue-500/20"
+                    : "bg-blue-50 border-blue-100 hover:bg-blue-100/50"
+                }`}
+              >
                 <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider mb-1">{t.statsSafe}</p>
                 <p className="text-3xl font-black text-blue-700 leading-none">{safeCount}</p>
               </div>
-              <div className="bg-slate-100 border border-slate-200 p-4 rounded-xl flex flex-col justify-between">
+              <div
+                onClick={() => setSelectedFilter("all")}
+                className={`p-4 rounded-xl flex flex-col justify-between cursor-pointer transition-all duration-200 hover:scale-[1.02] border ${
+                  selectedFilter === "all"
+                    ? "bg-slate-200 border-slate-500 shadow-md ring-2 ring-slate-500/20"
+                    : "bg-slate-100 border-slate-200 hover:bg-slate-200/50"
+                }`}
+              >
                 <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">{t.statsTotal}</p>
                 <p className="text-3xl font-black text-slate-800 leading-none">{activeProducts.length}</p>
               </div>
@@ -1073,17 +1300,25 @@ export default function App() {
           {/* Dual Action Toolbar */}
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
             {/* Search Box */}
-            <div className="relative flex-1">
+            <div className="relative flex-1 flex items-center">
               <span className="absolute inset-y-0 left-3.5 flex items-center text-slate-400">
                 <Search className="w-4.5 h-4.5" />
               </span>
               <input
                 type="text"
-                placeholder={locale === "ar" ? "ابحث باسم المنتج، الماركة..." : "Search product, brand..."}
+                placeholder={locale === "ar" ? "ابحث باسم المنتج، الماركة، أو تاريخ الصلاحية..." : "Search product, brand, or expiry date..."}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-11 pr-5 py-2.5 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium"
+                className="w-full pl-11 pr-12 py-2.5 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium"
               />
+              {/* Search by Image Button */}
+              <button
+                onClick={() => setIsSearchingByImage(true)}
+                title={locale === "ar" ? "البحث بالصورة" : "Search by Image"}
+                className="absolute right-3.5 text-slate-400 hover:text-blue-600 transition-colors cursor-pointer"
+              >
+                <Camera className="w-5 h-5" />
+              </button>
             </div>
 
             {/* Launch Register Dialog Button */}
@@ -1173,57 +1408,33 @@ export default function App() {
 
                         {/* Camera capture / upload feed */}
                         <div className="border border-slate-200 rounded-2xl p-4 bg-white flex flex-col items-center justify-center">
-                          {cameraActive && cameraStep === 1 ? (
-                            <div className="w-full space-y-4">
-                              <div className="relative aspect-video rounded-xl bg-black overflow-hidden shadow-inner">
-                                <video ref={videoRef} className="w-full h-full object-cover" playsInline />
-                                <div className="absolute top-3 left-3 bg-red-600 text-white text-[10px] px-2 py-0.5 rounded-full font-bold animate-pulse">
-                                  LIVE CAMERA
-                                </div>
-                              </div>
-                              <div className="flex gap-2">
-                                <button
-                                  onClick={capturePhoto}
-                                  className="flex-1 bg-slate-900 text-white text-xs font-bold py-2.5 rounded-xl hover:bg-slate-800 transition-colors"
-                                >
-                                  {locale === "ar" ? "التقاط الصورة الآن" : "Take Photo"}
-                                </button>
-                                <button
-                                  onClick={stopCamera}
-                                  className="px-4 bg-slate-200 text-slate-700 text-xs font-bold py-2.5 rounded-xl hover:bg-slate-300 transition-colors"
-                                >
-                                  {t.cancel}
-                                </button>
-                              </div>
+                          <div className="text-center py-6 space-y-4 w-full">
+                            <div className="w-16 h-16 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
+                              <Camera className="w-8 h-8" />
                             </div>
-                          ) : (
-                            <div className="text-center py-6 space-y-4 w-full">
-                              <div className="w-16 h-16 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
-                                <Camera className="w-8 h-8" />
-                              </div>
 
-                              <div className="flex flex-col gap-2 max-w-xs mx-auto">
-                                <button
-                                  onClick={() => startCamera(1)}
-                                  className="bg-slate-900 text-white text-xs font-bold py-2.5 rounded-xl hover:bg-slate-800 transition-colors flex items-center justify-center gap-2"
-                                >
-                                  <Camera className="w-4 h-4 text-amber-400" />
-                                  {t.snapPhoto}
-                                </button>
+                            <div className="flex flex-col gap-2 max-w-xs mx-auto">
+                              <button
+                                type="button"
+                                onClick={() => startCamera(1)}
+                                className="bg-slate-900 text-white text-xs font-bold py-2.5 rounded-xl hover:bg-slate-800 transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                              >
+                                <Camera className="w-4 h-4 text-amber-400" />
+                                {t.snapPhoto}
+                              </button>
 
-                                <label className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer border border-slate-200">
-                                  <Upload className="w-4 h-4" />
-                                  {t.uploadPhoto}
-                                  <input
-                                    type="file"
-                                    accept="image/*"
-                                    onChange={(e) => handleFileUpload(e, 1)}
-                                    className="hidden"
-                                  />
-                                </label>
-                              </div>
+                              <label className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer border border-slate-200">
+                                <Upload className="w-4 h-4" />
+                                {t.uploadPhoto}
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  onChange={(e) => handleFileUpload(e, 1)}
+                                  className="hidden"
+                                />
+                              </label>
                             </div>
-                          )}
+                          </div>
 
                           {packagingImage && (
                             <div className="mt-4 pt-4 border-t border-slate-100 w-full space-y-3">
@@ -1247,6 +1458,7 @@ export default function App() {
                               </div>
                               {ocrStatus !== "analyzing" && (
                                 <button
+                                  type="button"
                                   onClick={() => {
                                     if (!extractedName) {
                                       setExtractedName("منتج تم تصويره يدوياً");
@@ -1255,7 +1467,7 @@ export default function App() {
                                     }
                                     setRegisterStep(2);
                                   }}
-                                  className="w-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2.5 rounded-xl transition-all flex items-center justify-center gap-2"
+                                  className="w-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
                                 >
                                   {locale === "ar" ? "التالي: إدخال تاريخ الصلاحية ←" : "Next: Enter Expiry Date →"}
                                 </button>
@@ -1317,49 +1529,33 @@ export default function App() {
 
                         {/* Camera Snap for Expiry */}
                         <div className="border border-slate-200 rounded-2xl p-4 bg-white flex flex-col justify-center">
-                          {cameraActive && cameraStep === 2 ? (
-                            <div className="w-full space-y-4">
-                              <div className="relative aspect-video rounded-xl bg-black overflow-hidden shadow-inner">
-                                <video ref={videoRef} className="w-full h-full object-cover" playsInline />
-                                <div className="absolute top-3 left-3 bg-red-600 text-white text-[10px] px-2 py-0.5 rounded-full font-bold animate-pulse">
-                                  DATE READ FEED
-                                </div>
-                              </div>
+                          <div className="text-center py-6 space-y-4">
+                            <div className="w-16 h-16 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
+                              <Calendar className="w-8 h-8" />
+                            </div>
+
+                            <div className="flex flex-col gap-2 max-w-xs mx-auto">
                               <button
-                                onClick={capturePhoto}
-                                className="w-full bg-slate-900 text-white text-xs font-bold py-2.5 rounded-xl hover:bg-slate-800 transition-colors"
+                                type="button"
+                                onClick={() => startCamera(2)}
+                                className="bg-slate-900 text-white text-xs font-bold py-2.5 rounded-xl hover:bg-slate-800 transition-colors flex items-center justify-center gap-2 cursor-pointer"
                               >
-                                {locale === "ar" ? "قراءة التاريخ الآن" : "Scan Date"}
+                                <Camera className="w-4 h-4 text-amber-400" />
+                                {t.snapPhoto}
                               </button>
-                            </div>
-                          ) : (
-                            <div className="text-center py-6 space-y-4">
-                              <div className="w-16 h-16 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
-                                <Calendar className="w-8 h-8" />
-                              </div>
 
-                              <div className="flex flex-col gap-2 max-w-xs mx-auto">
-                                <button
-                                  onClick={() => startCamera(2)}
-                                  className="bg-slate-900 text-white text-xs font-bold py-2.5 rounded-xl hover:bg-slate-800 transition-colors flex items-center justify-center gap-2"
-                                >
-                                  <Camera className="w-4 h-4 text-amber-400" />
-                                  {t.snapPhoto}
-                                </button>
-
-                                <label className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer border border-slate-200">
-                                  <Upload className="w-4 h-4" />
-                                  {t.uploadPhoto}
-                                  <input
-                                    type="file"
-                                    accept="image/*"
-                                    onChange={(e) => handleFileUpload(e, 2)}
-                                    className="hidden"
-                                  />
-                                </label>
-                              </div>
+                              <label className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer border border-slate-200">
+                                <Upload className="w-4 h-4" />
+                                {t.uploadPhoto}
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  onChange={(e) => handleFileUpload(e, 2)}
+                                  className="hidden"
+                                />
+                              </label>
                             </div>
-                          )}
+                          </div>
                         </div>
 
                       </div>
@@ -1380,7 +1576,7 @@ export default function App() {
 
                         {/* Img preview (4 cols) */}
                         <div className="md:col-span-4 space-y-4">
-                          <div className="aspect-square bg-slate-100 rounded-2xl border border-slate-200 overflow-hidden shadow-xs relative">
+                          <div className="aspect-square bg-slate-100 rounded-2xl border border-slate-200 overflow-hidden shadow-xs relative group/img-preview">
                             <img
                               src={packagingImage || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400"}
                               alt="Cover"
@@ -1390,6 +1586,25 @@ export default function App() {
                             <div className="absolute bottom-3 left-3 bg-slate-950/80 backdrop-blur-xs text-white text-[10px] px-2 py-1 rounded-lg">
                               {extractedBrand || "Brand"}
                             </div>
+                            {/* Facebook style Cover Edit Button */}
+                            <label className="absolute top-3 right-3 p-2 bg-slate-900/80 hover:bg-slate-900 backdrop-blur-xs text-white rounded-full shadow-lg cursor-pointer transition-all flex items-center justify-center">
+                              <Edit className="w-3.5 h-3.5 text-white" />
+                              <input
+                                type="file"
+                                accept="image/*"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) {
+                                    const reader = new FileReader();
+                                    reader.onloadend = () => {
+                                      setPackagingImage(reader.result as string);
+                                    };
+                                    reader.readAsDataURL(file);
+                                  }
+                                }}
+                                className="hidden"
+                              />
+                            </label>
                           </div>
                         </div>
 
@@ -1468,7 +1683,7 @@ export default function App() {
                                 <input
                                   type="number"
                                   value={quantityInput}
-                                  onChange={(e) => setQuantityInput(Math.max(1, parseInt(e.target.value) || 1))}
+                                  onChange={(e) => setQuantityInput(e.target.value === "" ? "" as any : Math.max(1, parseInt(e.target.value) || 1))}
                                   className="w-full text-center border-none text-xs font-semibold py-2 focus:outline-none"
                                 />
                                 <button
@@ -1498,7 +1713,7 @@ export default function App() {
                                     <input
                                       type="number"
                                       value={quantityInput}
-                                      onChange={(e) => setQuantityInput(Math.max(1, parseInt(e.target.value) || 1))}
+                                      onChange={(e) => setQuantityInput(e.target.value === "" ? "" as any : Math.max(1, parseInt(e.target.value) || 1))}
                                       className="w-full text-center border-none text-xs font-semibold py-2 focus:outline-none font-mono"
                                     />
                                     <button
@@ -1526,7 +1741,7 @@ export default function App() {
                                     <input
                                       type="number"
                                       value={unitsPerCartonInput}
-                                      onChange={(e) => setUnitsPerCartonInput(Math.max(1, parseInt(e.target.value) || 1))}
+                                      onChange={(e) => setUnitsPerCartonInput(e.target.value === "" ? "" as any : Math.max(1, parseInt(e.target.value) || 1))}
                                       className="w-full text-center border-none text-xs font-semibold py-2 focus:outline-none font-mono"
                                     />
                                     <button
@@ -1554,7 +1769,7 @@ export default function App() {
                                     <input
                                       type="number"
                                       value={looseUnitsInput}
-                                      onChange={(e) => setLooseUnitsInput(Math.max(0, parseInt(e.target.value) || 0))}
+                                      onChange={(e) => setLooseUnitsInput(e.target.value === "" ? "" as any : Math.max(0, parseInt(e.target.value) || 0))}
                                       className="w-full text-center border-none text-xs font-semibold py-2 focus:outline-none font-mono"
                                     />
                                     <button
@@ -1589,7 +1804,10 @@ export default function App() {
                               <input
                                 type="date"
                                 value={manualExpiryInput}
-                                onChange={(e) => setManualExpiryInput(e.target.value)}
+                                onChange={(e) => {
+                                  setManualExpiryInput(e.target.value);
+                                  setRegistrationError(null);
+                                }}
                                 className="w-full rounded-xl border border-slate-200 pl-10 pr-4 py-2 text-xs focus:border-slate-400 focus:outline-none bg-white font-medium"
                               />
                             </div>
@@ -1619,8 +1837,30 @@ export default function App() {
                         </div>
                       </div>
 
+                      {/* Premium Red Alert for Duplicate Product */}
+                      <AnimatePresence>
+                        {registrationError && (
+                          <motion.div
+                            initial={{ opacity: 0, y: 10, height: 0 }}
+                            animate={{ opacity: 1, y: 0, height: "auto" }}
+                            exit={{ opacity: 0, y: -10, height: 0 }}
+                            className="bg-red-50 border border-red-200 rounded-2xl p-4 flex items-start gap-3 shadow-xs overflow-hidden mt-4"
+                          >
+                            <AlertTriangle className="w-5 h-5 text-red-500 shrink-0 mt-0.5 animate-bounce" />
+                            <div className="flex-1 text-right">
+                              <h4 className="text-red-800 font-bold text-xs font-display">
+                                {locale === "ar" ? "تنبيه: المنتج مضاف مسبقاً" : "Alert: Product Already Added"}
+                              </h4>
+                              <p className="text-[11px] text-red-700 font-semibold mt-1 leading-relaxed">
+                                {registrationError}
+                              </p>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+
                       {/* Final Confirm Buttons */}
-                      <div className="pt-4 border-t border-slate-150 flex items-center justify-end gap-3">
+                      <div className="pt-4 border-t border-slate-150 flex items-center justify-end gap-3 mt-4">
                         <button
                           onClick={resetForms}
                           className="px-5 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-500 transition-colors"
@@ -1712,14 +1952,18 @@ export default function App() {
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
                           [1] {t.duplicateCompareOld}
                         </span>
-                        <div className="aspect-square rounded-xl bg-white border border-slate-200 overflow-hidden relative shadow-xs">
+                        <div className="aspect-square rounded-xl bg-white border border-slate-200 overflow-hidden relative shadow-xs flex items-center justify-center bg-slate-50">
+                          <Package className="w-10 h-10 text-slate-350" />
                           <img
                             src={duplicateFound.imageUrl}
                             alt="Old product image"
-                            className="w-full h-full object-cover"
+                            className="absolute inset-0 w-full h-full object-cover z-10"
                             referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              e.currentTarget.style.display = "none";
+                            }}
                           />
-                          <div className="absolute top-2 left-2 bg-slate-900/80 text-white text-[9px] px-2 py-0.5 rounded-lg">
+                          <div className="absolute top-2 left-2 bg-slate-900/80 text-white text-[9px] px-2 py-0.5 rounded-lg z-20">
                             Qty: {duplicateFound.quantity}
                           </div>
                         </div>
@@ -1733,14 +1977,18 @@ export default function App() {
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
                           [2] {t.duplicateCompareNew}
                         </span>
-                        <div className="aspect-square rounded-xl bg-white border border-slate-200 overflow-hidden relative shadow-xs">
+                        <div className="aspect-square rounded-xl bg-white border border-slate-200 overflow-hidden relative shadow-xs flex items-center justify-center bg-slate-50">
+                          <Package className="w-10 h-10 text-slate-355" />
                           <img
                             src={pendingProduct.imageUrl}
                             alt="New captured product image"
-                            className="w-full h-full object-cover"
+                            className="absolute inset-0 w-full h-full object-cover z-10"
                             referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              e.currentTarget.style.display = "none";
+                            }}
                           />
-                          <div className="absolute top-2 left-2 bg-slate-900/80 text-white text-[9px] px-2 py-0.5 rounded-lg">
+                          <div className="absolute top-2 left-2 bg-slate-900/80 text-white text-[9px] px-2 py-0.5 rounded-lg z-20">
                             Qty: {pendingProduct.quantity}
                           </div>
                         </div>
@@ -1805,12 +2053,20 @@ export default function App() {
                 >
                   {/* Header */}
                   <div className="relative h-40 bg-gradient-to-br from-slate-800 to-slate-900 overflow-hidden">
+                    <div className="absolute inset-0 bg-slate-900/40 z-0" />
                     {viewingProduct.imageUrl && (
                       <img
                         src={viewingProduct.imageUrl}
                         alt={viewingProduct.name}
-                        className="absolute inset-0 w-full h-full object-cover opacity-30"
+                        className="absolute inset-0 w-full h-full object-cover opacity-30 z-10 cursor-pointer hover:opacity-50 transition-opacity"
                         referrerPolicy="no-referrer"
+                        onClick={() => {
+                          setViewingFullImage(viewingProduct.imageUrl);
+                          setViewingFullImageGroupProducts([viewingProduct]);
+                        }}
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+                        }}
                       />
                     )}
                     <div className="absolute inset-0 bg-gradient-to-t from-slate-900/80 to-transparent" />
@@ -1837,14 +2093,29 @@ export default function App() {
                       </button>
                     </div>
                     <div className="absolute bottom-4 left-5 right-5 flex items-end gap-4">
-                      {viewingProduct.imageUrl && (
-                        <img
-                          src={viewingProduct.imageUrl}
-                          alt={viewingProduct.name}
-                          className="w-16 h-16 rounded-2xl object-cover border-2 border-white/30 shadow-xl shrink-0"
-                          referrerPolicy="no-referrer"
-                        />
-                      )}
+                      <div
+                        className="w-16 h-16 rounded-2xl border-2 border-white/30 shadow-xl shrink-0 bg-slate-800 flex items-center justify-center overflow-hidden relative cursor-pointer hover:scale-105 transition-transform"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (viewingProduct.imageUrl) {
+                            setViewingFullImage(viewingProduct.imageUrl);
+                            setViewingFullImageGroupProducts([viewingProduct]);
+                          }
+                        }}
+                      >
+                        <Package className="w-6 h-6 text-slate-500" />
+                        {viewingProduct.imageUrl && (
+                          <img
+                            src={viewingProduct.imageUrl}
+                            alt={viewingProduct.name}
+                            className="absolute inset-0 w-full h-full object-cover z-10"
+                            referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              e.currentTarget.style.display = "none";
+                            }}
+                          />
+                        )}
+                      </div>
                       <div className="min-w-0">
                         <p className="text-[10px] font-bold text-blue-300 uppercase tracking-widest">{viewingProduct.brand}</p>
                         <h2 className="text-lg font-black text-white leading-tight truncate">{viewingProduct.name}</h2>
@@ -1952,6 +2223,52 @@ export default function App() {
                         </div>
                       </div>
                     )}
+
+                    {/* Expiry Action Buttons (Sold, Checked, Handled) inside detail modal */}
+                    <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col gap-2.5">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 justify-start">
+                        <CheckCircle className="w-3.5 h-3.5 text-blue-500" />
+                        <span>{locale === "ar" ? "أزرار التحكم والإجراءات" : "Control Actions & Updates"}</span>
+                      </p>
+                      <div className="flex flex-col gap-1.5 w-full">
+                        {/* Row 1: Sold, Checked, Handled */}
+                        <div className="flex gap-1.5 w-full">
+                          <button
+                            onClick={() => {
+                              handleProductAction(viewingProduct.id, "sold");
+                              setViewingProduct(null); // Close modal on action
+                            }}
+                            title={t.actionSold}
+                            className="flex-1 flex items-center justify-center gap-1 px-2 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white text-[10px] md:text-xs font-black shadow-md shadow-emerald-500/25 transition-all cursor-pointer"
+                          >
+                            <ShoppingCart className="w-3.5 h-3.5" />
+                            <span>{t.actionSold}</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              handleProductAction(viewingProduct.id, "shelf_checked");
+                              setViewingProduct(null); // Close modal on action
+                            }}
+                            title={t.actionChecked}
+                            className="flex-1 flex items-center justify-center gap-1 px-2 py-2 rounded-xl bg-white hover:bg-slate-50 active:scale-95 text-slate-600 text-[10px] md:text-xs font-bold border border-slate-200 shadow-sm transition-all cursor-pointer"
+                          >
+                            <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
+                            <span>{t.actionChecked.split(" ")[0]}</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              handleProductAction(viewingProduct.id, "handled");
+                              setViewingProduct(null); // Close modal on action
+                            }}
+                            title={t.actionHandled}
+                            className="flex-1 flex items-center justify-center gap-1 px-2 py-2 rounded-xl bg-slate-900 hover:bg-slate-700 active:scale-95 text-white text-[10px] md:text-xs font-bold shadow-sm transition-all cursor-pointer"
+                          >
+                            <Check className="w-3.5 h-3.5 text-blue-400" />
+                            <span>{t.actionHandled}</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
 
                     {/* Dates */}
                     <div className="grid grid-cols-2 gap-3 text-[11px] text-slate-500">
@@ -2167,7 +2484,7 @@ export default function App() {
                             <input
                               type="number"
                               value={editingQuantity}
-                              onChange={(e) => setEditingQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                              onChange={(e) => setEditingQuantity(e.target.value === "" ? "" as any : Math.max(1, parseInt(e.target.value) || 1))}
                               className="w-full text-center border-none text-xs font-semibold py-2 focus:outline-none"
                             />
                             <button
@@ -2196,7 +2513,7 @@ export default function App() {
                                   <input
                                     type="number"
                                     value={editingQuantity}
-                                    onChange={(e) => setEditingQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                                    onChange={(e) => setEditingQuantity(e.target.value === "" ? "" as any : Math.max(1, parseInt(e.target.value) || 1))}
                                     className="w-full text-center border-none text-xs font-semibold py-1 focus:outline-none font-mono"
                                   />
                                   <button
@@ -2224,7 +2541,7 @@ export default function App() {
                                   <input
                                     type="number"
                                     value={editingUnitsPerCarton}
-                                    onChange={(e) => setEditingUnitsPerCarton(Math.max(1, parseInt(e.target.value) || 1))}
+                                    onChange={(e) => setEditingUnitsPerCarton(e.target.value === "" ? "" as any : Math.max(1, parseInt(e.target.value) || 1))}
                                     className="w-full text-center border-none text-xs font-semibold py-1 focus:outline-none font-mono"
                                   />
                                   <button
@@ -2252,7 +2569,7 @@ export default function App() {
                                   <input
                                     type="number"
                                     value={editingLooseUnits}
-                                    onChange={(e) => setEditingLooseUnits(Math.max(0, parseInt(e.target.value) || 0))}
+                                    onChange={(e) => setEditingLooseUnits(e.target.value === "" ? "" as any : Math.max(0, parseInt(e.target.value) || 0))}
                                     className="w-full text-center border-none text-xs font-semibold py-1 focus:outline-none font-mono"
                                   />
                                   <button
@@ -2416,8 +2733,21 @@ export default function App() {
               </div>
             </div>
 
-            {/* Empty State */}
-            {filteredProducts.length === 0 ? (
+            {/* Shelf Items */}
+            {isLoading ? (
+              <div className="flex flex-col gap-4 animate-pulse">
+                {[1, 2, 3].map((n) => (
+                  <div key={n} className="bg-white border border-slate-200 rounded-3xl p-6 flex flex-col md:flex-row gap-4">
+                    <div className="w-full h-44 md:h-28 md:w-36 rounded-2xl bg-slate-200 shrink-0" />
+                    <div className="flex-1 space-y-3 py-1">
+                      <div className="h-4 bg-slate-200 rounded w-1/4" />
+                      <div className="h-6 bg-slate-200 rounded w-3/4" />
+                      <div className="h-4 bg-slate-200 rounded w-1/2" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : groupedProductsList.length === 0 ? (
               <div className="bg-white rounded-3xl border border-slate-200/80 p-16 text-center">
                 <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-slate-100 to-slate-50 flex items-center justify-center mx-auto mb-4 shadow-inner">
                   <CheckCircle className="w-10 h-10 text-slate-300" />
@@ -2430,206 +2760,233 @@ export default function App() {
                 </p>
               </div>
             ) : (
-              <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-5">
                 <AnimatePresence initial={false}>
-                  {filteredProducts.map((p, idx) => {
-                    const daysLeft = getDaysRemaining(p.expiryDate);
-                    const bStyle = getBadgeStyle(daysLeft);
-                    const isCritical = daysLeft < 0;
-                    const isExpiring = daysLeft >= 0 && daysLeft <= 1;
-                    const isWarning = daysLeft >= 2 && daysLeft <= 3;
-                    const isWeek = daysLeft >= 4 && daysLeft <= 7;
-
-                    const uc = isCritical
-                      ? { accent: "#dc2626", accentDim: "#fca5a580", badge: "bg-red-600", badgeText: "text-red-700", badgeBg: "bg-red-50", dateColor: "#dc2626", dateBg: "#fff1f2", dateBorder: "#fecdd3", leftBar: "bg-red-500" }
-                      : isExpiring
-                        ? { accent: "#ef4444", accentDim: "#fca5a540", badge: "bg-red-500", badgeText: "text-red-600", badgeBg: "bg-red-50", dateColor: "#dc2626", dateBg: "#fff1f2", dateBorder: "#fecdd3", leftBar: "bg-red-400" }
-                        : isWarning
-                          ? { accent: "#f97316", accentDim: "#fed7aa40", badge: "bg-orange-500", badgeText: "text-orange-700", badgeBg: "bg-orange-50", dateColor: "#ea580c", dateBg: "#fff7ed", dateBorder: "#fed7aa", leftBar: "bg-orange-400" }
-                          : isWeek
-                            ? { accent: "#f59e0b", accentDim: "#fde68a40", badge: "bg-amber-500", badgeText: "text-amber-700", badgeBg: "bg-amber-50", dateColor: "#b45309", dateBg: "#fffbeb", dateBorder: "#fde68a", leftBar: "bg-amber-400" }
-                            : { accent: "#10b981", accentDim: "#6ee7b740", badge: "bg-emerald-500", badgeText: "text-emerald-700", badgeBg: "bg-emerald-50", dateColor: "#059669", dateBg: "#f0fdf4", dateBorder: "#a7f3d0", leftBar: "bg-emerald-400" };
-
-                    const maxDays = 30;
-                    const clampedDays = Math.max(0, Math.min(daysLeft, maxDays));
-                    const pct = isCritical ? 0 : clampedDays / maxDays;
-                    const r = 18, circ = 2 * Math.PI * r;
-                    const dash = pct * circ;
-
+                  {groupedProductsList.map((group, groupIdx) => {
+                    const totalGroupQuantity = group.batches.reduce((sum, b) => sum + b.quantity, 0);
+                    // Use details from the first batch
+                    const firstBatch = group.batches[0];
+                    const firstBatchUnit = firstBatch.quantityUnit || "pcs";
+                    
                     return (
                       <motion.div
-                        key={p.id}
+                        key={`${group.name}_${group.brand}`}
                         initial={{ opacity: 0, y: 8 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, height: 0 }}
-                        transition={{ delay: idx * 0.035, type: "spring", stiffness: 340, damping: 30 }}
-                        className="group relative flex flex-col md:flex-row items-stretch bg-white border border-slate-200/80 rounded-2xl shadow-xs hover:shadow-md hover:border-slate-300 transition-all duration-250 overflow-hidden"
+                        transition={{ delay: groupIdx * 0.035, type: "spring", stiffness: 340, damping: 30 }}
+                        className="group relative flex flex-col md:flex-row items-stretch bg-white border border-slate-200/80 rounded-3xl shadow-xs hover:shadow-md hover:border-slate-300 transition-all duration-250 overflow-hidden"
                         dir={locale === "ar" ? "rtl" : "ltr"}
                       >
-                        {/* Urgency left/top accent bar */}
-                        <div className={`w-full h-1.5 md:w-1.5 md:h-auto shrink-0 ${uc.leftBar} ${isCritical || isExpiring ? "animate-pulse" : ""}`} />
+                        {/* Left/Top Urgency accent bar using nearest batch */}
+                        {(() => {
+                          const nearestBatch = [...group.batches].sort((a, b) => getDaysRemaining(a.expiryDate) - getDaysRemaining(b.expiryDate))[0];
+                          const daysLeft = getDaysRemaining(nearestBatch.expiryDate);
+                          const isCritical = daysLeft < 0;
+                          const isExpiring = daysLeft >= 0 && daysLeft <= 1;
+                          const isWarning = daysLeft >= 2 && daysLeft <= 3;
+                          const isWeek = daysLeft >= 4 && daysLeft <= 7;
+                          const leftBarColor = isCritical
+                            ? "bg-red-600 animate-pulse"
+                            : isExpiring
+                              ? "bg-red-500 animate-pulse"
+                              : isWarning
+                                ? "bg-orange-500"
+                                : isWeek
+                                  ? "bg-amber-500"
+                                  : "bg-emerald-500";
+                          return <div className={`w-full h-1.5 md:w-1.5 md:h-auto shrink-0 ${leftBarColor}`} />;
+                        })()}
 
                         {/* ── IMAGE ── */}
                         <div
-                          className="relative w-full h-48 md:h-auto md:w-44 shrink-0 cursor-pointer overflow-hidden bg-slate-100"
-                          onClick={() => setViewingProduct(p)}
+                          className="relative w-full h-44 md:h-auto md:w-40 shrink-0 cursor-pointer overflow-hidden bg-slate-100"
+                          onClick={() => {
+                            setViewingFullImage(group.imageUrl);
+                            setViewingFullImageGroupProducts(group.batches);
+                          }}
+                          title={locale === "ar" ? "اضغط لعرض الصورة كاملة" : "Click to view full image"}
                         >
-                          {p.imageUrl ? (
+                          {/* Graceful Package Placeholder Fallback */}
+                          <div className="absolute inset-0 flex items-center justify-center bg-slate-100">
+                            <Package className="w-10 h-10 text-slate-300" />
+                          </div>
+                          {group.imageUrl && (
                             <img
-                              src={p.imageUrl}
-                              alt={p.name}
-                              className="absolute inset-0 w-full h-full object-cover group-hover:scale-[1.04] transition-transform duration-500 ease-out"
+                              src={group.imageUrl}
+                              alt={group.name}
+                              className="absolute inset-0 w-full h-full object-cover group-hover:scale-[1.04] transition-transform duration-500 ease-out z-10"
                               referrerPolicy="no-referrer"
+                              onError={(e) => {
+                                e.currentTarget.style.display = "none";
+                              }}
                             />
-                          ) : (
-                            <div className="absolute inset-0 flex items-center justify-center">
-                              <Package className="w-10 h-10 text-slate-300" />
-                            </div>
                           )}
-                          {/* Gradient overlay */}
-                          <div className="absolute inset-0 bg-gradient-to-t from-black/30 to-transparent" />
-                          {/* Quantity chip */}
-                          <div
-                            className="absolute bottom-2 left-2 flex items-center gap-1 px-2 py-0.5 rounded-full text-white text-[10px] font-black shadow-lg backdrop-blur-sm"
-                            style={{ backgroundColor: uc.accent + "dd" }}
-                          >
-                            <Package className="w-2.5 h-2.5" />
-                            {formatQuantity(p.quantity, p.quantityUnit, p.unitsPerCarton, p.looseUnits)}
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
+                          <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between text-white text-[9px] font-black shadow-lg backdrop-blur-xs bg-slate-900/60 py-0.5 px-2 rounded-full">
+                            <span>{locale === "ar" ? "مجموع:" : "Total:"}</span>
+                            <span className="font-mono">{formatQuantity(totalGroupQuantity, firstBatchUnit, firstBatch.unitsPerCarton, firstBatch.looseUnits)}</span>
                           </div>
                         </div>
 
-                        {/* ── CENTER INFO ── */}
-                        <div
-                          className="flex-1 min-w-0 px-5 py-4 flex flex-col justify-between gap-3 cursor-pointer"
-                          onClick={() => setViewingProduct(p)}
-                        >
-                          {/* Top row: status + name */}
-                          <div>
-                            <div className="flex items-center gap-2 mb-1.5">
-                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black text-white ${uc.badge}`}>
-                                <span className={`w-1 h-1 rounded-full bg-white/80 ${isCritical || isExpiring ? "animate-pulse" : ""}`} />
-                                {bStyle.label}
-                              </span>
-                              {p.brand && (
-                                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">
-                                  {p.brand}
+                        {/* ── INFO & BATCHES NESTED CONTAINER ── */}
+                        <div className="flex-1 min-w-0 p-5 flex flex-col justify-between gap-4">
+                          {/* Product Header */}
+                          <div className="cursor-pointer" onClick={() => setViewingProduct(firstBatch)}>
+                            <div className="flex items-center gap-2 mb-1">
+                              {group.brand && (
+                                <span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md">
+                                  {group.brand}
                                 </span>
                               )}
+                              <span className="text-[9px] bg-slate-100 text-slate-500 font-bold px-1.5 py-0.5 rounded border border-slate-200/50">
+                                {group.batches.length} {locale === "ar" ? "دفعة/تاريخ" : group.batches.length === 1 ? "batch" : "batches"}
+                              </span>
                             </div>
-                            <h4 className="font-black text-slate-900 text-base leading-tight tracking-tight line-clamp-2 md:line-clamp-1 group-hover:text-blue-700 transition-colors">
-                              {p.name}
+                            <h4 className="font-black text-slate-900 text-base leading-tight tracking-tight hover:text-blue-700 transition-colors">
+                              {group.name}
                             </h4>
-                          </div>
-
-                          {/* Middle: expiry date */}
-                          <div className="flex items-center gap-3">
-                            <div
-                              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-black font-mono"
-                              style={{ backgroundColor: uc.dateBg, borderColor: uc.dateBorder, color: uc.dateColor }}
-                            >
-                              <Calendar className="w-3 h-3" />
-                              {locale === "ar" ? "ينتهي:" : "Exp:"} {p.expiryDate.split("-").reverse().join(".")}
-                            </div>
-                          </div>
-
-                          {/* Bottom: specs row (language tags) */}
-                          <div className="flex items-center gap-2 pt-1 border-t border-slate-100/80">
-                            {p.multilingualNames.length > 0 ? (
-                              <>
-                                <span className="text-[10px] text-slate-400 font-medium">{locale === "ar" ? "اللغات:" : "Languages:"}</span>
-                                <div className="flex flex-wrap gap-1">
-                                  {p.multilingualNames.slice(0, 6).map((m, i) => (
-                                    <span
-                                      key={i}
-                                      title={m.name}
-                                      className="flex items-center gap-0.5 text-[9px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-500 border border-slate-200 px-1.5 py-0.5 rounded uppercase tracking-wide transition-colors cursor-default"
-                                    >
-                                      {m.language}
-                                    </span>
-                                  ))}
-                                  {p.multilingualNames.length > 6 && (
-                                    <span className="text-[9px] font-bold text-violet-500 bg-violet-50 border border-violet-200 px-1.5 py-0.5 rounded">
-                                      +{p.multilingualNames.length - 6}
-                                    </span>
-                                  )}
-                                </div>
-                              </>
-                            ) : (
-                              <span className="text-[10px] text-slate-300 italic">{locale === "ar" ? "لا توجد أسماء متعددة اللغات" : "No multilingual names"}</span>
+                            
+                            {/* Multilingual names */}
+                            {group.multilingualNames.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-2">
+                                {group.multilingualNames.slice(0, 3).map((m, i) => (
+                                  <span key={i} className="text-[9px] font-semibold bg-slate-50 text-slate-400 border border-slate-200/60 px-1.5 py-0.2 rounded uppercase">
+                                    {m.language}: {m.name}
+                                  </span>
+                                ))}
+                              </div>
                             )}
                           </div>
-                        </div>
 
-                        {/* ── RIGHT: Countdown + Actions ── */}
-                        <div className="shrink-0 flex flex-row md:flex-col items-center justify-between md:justify-center gap-4 md:gap-3 p-4 md:px-5 md:py-4 border-t md:border-t-0 md:border-l border-slate-150 bg-slate-50/20 md:bg-transparent">
-                          {/* Countdown display */}
-                          <div className="flex flex-row md:flex-col items-center gap-2 md:gap-1.5 shrink-0">
-                            <div className="relative w-12 h-12 md:w-14 md:h-14">
-                              <svg className="w-12 h-12 md:w-14 md:h-14 -rotate-90" viewBox="0 0 48 48">
-                                <circle cx="24" cy="24" r={r} fill="none" stroke={uc.accentDim} strokeWidth="3.5" />
-                                <circle
-                                  cx="24" cy="24" r={r}
-                                  fill="none"
-                                  stroke={uc.accent}
-                                  strokeWidth="3.5"
-                                  strokeLinecap="round"
-                                  strokeDasharray={`${dash} ${circ}`}
-                                  style={{ filter: `drop-shadow(0 0 4px ${uc.accent}70)`, transition: "stroke-dasharray 1.2s cubic-bezier(.4,0,.2,1)" }}
-                                />
-                              </svg>
-                              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                                <span className="text-sm md:text-base font-black leading-none" style={{ color: uc.dateColor }}>
-                                  {isCritical ? "✕" : daysLeft > 99 ? "∞" : daysLeft}
-                                </span>
-                              </div>
-                            </div>
-                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
-                              {locale === "ar" ? "يوم متبقي" : "days left"}
-                            </span>
-                          </div>
+                          {/* List of Batches ("بقلب بعضو" - nested list) */}
+                          <div className="border-t border-slate-100 pt-3 space-y-3.5">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                              {locale === "ar" ? "تواريخ الصلاحية والكميات الحالية:" : "Expiry Dates & Quantities:"}
+                            </p>
+                            
+                            <div className="space-y-2">
+                              {group.batches.map((b) => {
+                                const daysLeft = getDaysRemaining(b.expiryDate);
+                                const bStyle = getBadgeStyle(daysLeft);
+                                const isCritical = daysLeft < 0;
+                                const isExpiring = daysLeft >= 0 && daysLeft <= 1;
+                                const isWarning = daysLeft >= 2 && daysLeft <= 3;
+                                const isWeek = daysLeft >= 4 && daysLeft <= 7;
 
-                          {/* Actions wrapper */}
-                          <div className="flex-1 md:w-full flex flex-col gap-2 max-w-[260px] md:max-w-none" onClick={(e) => e.stopPropagation()}>
-                            {/* Action buttons */}
-                            <div className="flex flex-row md:flex-col gap-1.5 w-full">
-                              <button
-                                onClick={() => handleProductAction(p.id, "sold")}
-                                className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 md:py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white text-[9px] md:text-[10px] font-black shadow-md shadow-emerald-500/25 transition-all"
-                              >
-                                <ShoppingCart className="w-3 h-3 md:w-3.5 md:h-3.5" />
-                                <span>{t.actionSold}</span>
-                              </button>
-                              <button
-                                onClick={() => handleProductAction(p.id, "shelf_checked")}
-                                className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 md:py-2 rounded-xl bg-white hover:bg-slate-50 active:scale-95 text-slate-600 text-[9px] md:text-[10px] font-bold border border-slate-200 shadow-sm transition-all"
-                              >
-                                <CheckCircle className="w-3 h-3 md:w-3.5 md:h-3.5 text-emerald-500" />
-                                <span>{t.actionChecked.split(" ")[0]}</span>
-                              </button>
-                              <button
-                                onClick={() => handleProductAction(p.id, "handled")}
-                                className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 md:py-2 rounded-xl bg-slate-900 hover:bg-slate-700 active:scale-95 text-white text-[9px] md:text-[10px] font-bold shadow-sm transition-all"
-                              >
-                                <Check className="w-3 h-3 md:w-3.5 md:h-3.5 text-blue-400" />
-                                <span>{t.actionHandled}</span>
-                              </button>
-                            </div>
+                                const uc = isCritical
+                                  ? { accent: "#dc2626", accentDim: "#fca5a580", badge: "bg-red-600", dateColor: "#dc2626", dateBg: "#fff1f2", dateBorder: "#fecdd3" }
+                                  : isExpiring
+                                    ? { accent: "#ef4444", accentDim: "#fca5a540", badge: "bg-red-500", dateColor: "#dc2626", dateBg: "#fff1f2", dateBorder: "#fecdd3" }
+                                    : isWarning
+                                      ? { accent: "#f97316", accentDim: "#fed7aa40", badge: "bg-orange-500", dateColor: "#ea580c", dateBg: "#fff7ed", dateBorder: "#fed7aa" }
+                                      : isWeek
+                                        ? { accent: "#f59e0b", accentDim: "#fde68a40", badge: "bg-amber-500", dateColor: "#b45309", dateBg: "#fffbeb", dateBorder: "#fde68a" }
+                                        : { accent: "#10b981", accentDim: "#6ee7b740", badge: "bg-emerald-500", dateColor: "#059669", dateBg: "#f0fdf4", dateBorder: "#a7f3d0" };
 
-                            {/* Edit / Delete */}
-                            <div className="flex gap-1.5 w-full">
-                              <button
-                                onClick={() => startEditing(p)}
-                                className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 active:scale-95 text-blue-600 text-[9px] font-bold border border-blue-200 transition-all"
-                              >
-                                <Edit className="w-3 h-3" />
-                                {locale === "ar" ? "تعديل" : "Edit"}
-                              </button>
-                              <button
-                                onClick={() => setDeletingProductId(p.id)}
-                                className="flex items-center justify-center p-1.5 rounded-lg bg-red-50 hover:bg-red-100 active:scale-95 text-red-500 border border-red-200 transition-all shrink-0"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                                const maxDays = 30;
+                                const clampedDays = Math.max(0, Math.min(daysLeft, maxDays));
+                                const pct = isCritical ? 0 : clampedDays / maxDays;
+                                const r = 14, circ = 2 * Math.PI * r;
+                                const dash = pct * circ;
+
+                                return (
+                                  <div
+                                    key={b.id}
+                                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-slate-50/50 hover:bg-slate-50 border border-slate-150 rounded-2xl transition-all"
+                                  >
+                                    {/* Date & Urgency badge */}
+                                    <div className="flex items-center gap-3 min-w-0">
+                                      {/* Small countdown circle */}
+                                      <div className="relative w-8 h-8 shrink-0">
+                                        <svg className="w-8 h-8 -rotate-90" viewBox="0 0 36 36">
+                                          <circle cx="18" cy="18" r={r} fill="none" stroke={uc.accentDim} strokeWidth="2.5" />
+                                          <circle
+                                            cx="18" cy="18" r={r}
+                                            fill="none"
+                                            stroke={uc.accent}
+                                            strokeWidth="2.5"
+                                            strokeLinecap="round"
+                                            strokeDasharray={`${dash} ${circ}`}
+                                            style={{ transition: "stroke-dasharray 1.2s" }}
+                                          />
+                                        </svg>
+                                        <div className="absolute inset-0 flex items-center justify-center">
+                                          <span className="text-[10px] font-black" style={{ color: uc.dateColor }}>
+                                            {isCritical ? "✕" : daysLeft > 99 ? "∞" : daysLeft}
+                                          </span>
+                                        </div>
+                                      </div>
+                                      
+                                      <div className="min-w-0">
+                                        {/* Expiry date badge */}
+                                        <div
+                                          className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg border text-[10px] font-bold font-mono"
+                                          style={{ backgroundColor: uc.dateBg, borderColor: uc.dateBorder, color: uc.dateColor }}
+                                        >
+                                          <Calendar className="w-2.5 h-2.5" />
+                                          {locale === "ar" ? "ينتهي:" : "Exp:"} {b.expiryDate.split("-").reverse().join(".")}
+                                        </div>
+                                        {/* Specific batch quantity */}
+                                        <div className="text-[10px] text-slate-500 font-semibold mt-1">
+                                          {locale === "ar" ? "الكمية في هذا التاريخ: " : "Qty: "}
+                                          <span className="text-slate-800 font-bold">{formatQuantity(b.quantity, b.quantityUnit, b.unitsPerCarton, b.looseUnits)}</span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                    
+                                    {/* Action Buttons for this specific batch (Reverted to the old wide design with text) */}
+                                    <div className="flex flex-col gap-1.5 w-full sm:w-auto min-w-[200px] sm:min-w-[280px]" onClick={(e) => e.stopPropagation()}>
+                                      {/* Row 1: Sold, Checked, Handled */}
+                                      <div className="flex gap-1.5 w-full">
+                                        <button
+                                          onClick={() => handleProductAction(b.id, "sold")}
+                                          title={t.actionSold}
+                                          className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white text-[9px] md:text-[10px] font-black shadow-md shadow-emerald-500/25 transition-all cursor-pointer"
+                                        >
+                                          <ShoppingCart className="w-3 h-3 md:w-3.5 md:h-3.5" />
+                                          <span>{t.actionSold}</span>
+                                        </button>
+                                        <button
+                                          onClick={() => handleProductAction(b.id, "shelf_checked")}
+                                          title={t.actionChecked}
+                                          className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-xl bg-white hover:bg-slate-50 active:scale-95 text-slate-600 text-[9px] md:text-[10px] font-bold border border-slate-200 shadow-sm transition-all cursor-pointer"
+                                        >
+                                          <CheckCircle className="w-3 h-3 md:w-3.5 md:h-3.5 text-emerald-500" />
+                                          <span>{t.actionChecked.split(" ")[0]}</span>
+                                        </button>
+                                        <button
+                                          onClick={() => handleProductAction(b.id, "handled")}
+                                          title={t.actionHandled}
+                                          className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-700 active:scale-95 text-white text-[9px] md:text-[10px] font-bold shadow-sm transition-all cursor-pointer"
+                                        >
+                                          <Check className="w-3 h-3 md:w-3.5 md:h-3.5 text-blue-400" />
+                                          <span>{t.actionHandled}</span>
+                                        </button>
+                                      </div>
+                                      {/* Row 2: Edit / Delete */}
+                                      <div className="flex gap-1.5 w-full">
+                                        <button
+                                          onClick={() => startEditing(b)}
+                                          title={locale === "ar" ? "تعديل" : "Edit"}
+                                          className="flex-1 flex items-center justify-center gap-1 py-1 px-2 rounded-lg bg-blue-50 hover:bg-blue-100 active:scale-95 text-blue-600 text-[9px] font-bold border border-blue-200 transition-all cursor-pointer"
+                                        >
+                                          <Edit className="w-3.5 h-3.5" />
+                                          <span>{locale === "ar" ? "تعديل" : "Edit"}</span>
+                                        </button>
+                                        <button
+                                          onClick={() => setDeletingProductId(b.id)}
+                                          title={locale === "ar" ? "حذف" : "Delete"}
+                                          className="flex-1 flex items-center justify-center gap-1 py-1 px-2 rounded-lg bg-red-50 hover:bg-red-100 active:scale-95 text-red-500 text-[9px] font-bold border border-red-200 transition-all cursor-pointer"
+                                        >
+                                          <Trash2 className="w-3 h-3" />
+                                          <span>{locale === "ar" ? "حذف" : "Delete"}</span>
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
                         </div>
@@ -2725,6 +3082,244 @@ export default function App() {
           <span>App Version: v2.4.1 Premium</span>
         </div>
       </footer>
+      {/* Full Screen Image Preview Modal */}
+      <AnimatePresence>
+        {viewingFullImage && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex items-center justify-center p-4 cursor-pointer"
+            onClick={() => {
+              setViewingFullImage(null);
+              setViewingFullImageGroupProducts([]);
+            }}
+          >
+            <button
+              onClick={() => {
+                setViewingFullImage(null);
+                setViewingFullImageGroupProducts([]);
+              }}
+              className="absolute top-6 right-6 p-3 bg-white/10 hover:bg-white/20 text-white rounded-full transition-colors cursor-pointer"
+            >
+              <X className="w-6 h-6" />
+            </button>
+            <div className="relative flex flex-col items-center justify-center max-w-full max-h-[85vh]">
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 gap-2">
+                <Package className="w-20 h-20 text-slate-650" />
+                <span className="text-xs font-bold">{locale === "ar" ? "تعذر تحميل الصورة" : "Image failed to load"}</span>
+              </div>
+              <motion.img
+                initial={{ scale: 0.9 }}
+                animate={{ scale: 1 }}
+                exit={{ scale: 0.9 }}
+                src={viewingFullImage}
+                alt="Full Preview"
+                className="max-w-full max-h-[70vh] md:max-h-[75vh] object-contain rounded-2xl shadow-2xl z-10"
+                onClick={(e) => e.stopPropagation()}
+                onError={(e) => {
+                  e.currentTarget.style.display = "none";
+                }}
+              />
+              
+              {/* Edit Image Action Controls at bottom of fullscreen modal */}
+              {viewingFullImageGroupProducts.length > 0 && (
+                <div
+                  className="mt-6 flex items-center gap-4 bg-slate-900/90 backdrop-blur-md px-6 py-3 rounded-2xl border border-slate-700/50 shadow-2xl"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <span className="text-xs font-bold text-slate-300">
+                    {locale === "ar" ? "تغيير صورة المنتج:" : "Change product image:"}
+                  </span>
+                  
+                  <button
+                    onClick={() => {
+                      setViewingFullImage(null); // Close modal before starting camera
+                      startCamera(4);
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white text-[11px] font-bold rounded-xl transition-all cursor-pointer shadow-md shadow-blue-500/25"
+                  >
+                    <Camera className="w-3.5 h-3.5 text-amber-400" />
+                    <span>{locale === "ar" ? "الكاميرا" : "Camera"}</span>
+                  </button>
+                  
+                  <label className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-white text-[11px] font-bold rounded-xl transition-all border border-slate-600 cursor-pointer">
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>{locale === "ar" ? "رفع صورة" : "Upload Image"}</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onloadend = () => {
+                            updateGroupProductsImage(reader.result as string);
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Search by Image Options Modal */}
+      <AnimatePresence>
+        {isSearchingByImage && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              className="bg-white rounded-3xl max-w-md w-full overflow-hidden shadow-2xl border border-slate-200 p-6 space-y-4"
+            >
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                  <Camera className="w-5 h-5 text-blue-600" />
+                  {locale === "ar" ? "البحث بالصورة" : "Search by Image"}
+                </h3>
+                <button
+                  onClick={() => setIsSearchingByImage(false)}
+                  className="p-1 hover:bg-slate-150 rounded-lg text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              
+              <div className="text-center py-4 space-y-4">
+                <p className="text-xs text-slate-500">
+                  {locale === "ar"
+                    ? "قم بالتقاط صورة للمنتج أو رفعه للبحث عنه تلقائياً باستخدام الذكاء الاصطناعي."
+                    : "Take a photo or upload product packaging to search automatically using AI."}
+                </p>
+                
+                <div className="flex flex-col gap-2 max-w-xs mx-auto">
+                  <button
+                    onClick={() => {
+                      setIsSearchingByImage(false);
+                      startCamera(3); // Start camera in search mode
+                    }}
+                    className="bg-slate-900 text-white text-xs font-bold py-2.5 rounded-xl hover:bg-slate-800 transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <Camera className="w-4 h-4 text-amber-400" />
+                    {t.snapPhoto}
+                  </button>
+
+                  <label className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer border border-slate-200">
+                    <Upload className="w-4 h-4" />
+                    {t.uploadPhoto}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onloadend = () => {
+                            triggerImageSearch(reader.result as string);
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Fullscreen WhatsApp-like Camera Overlay */}
+      <div
+        className={`fixed inset-0 z-[100] bg-black flex flex-col justify-between ${
+          cameraActive && cameraStep ? "flex" : "hidden"
+        }`}
+      >
+        {/* Top Toolbar */}
+        <div className="p-4 flex items-center justify-between text-white bg-gradient-to-b from-black/80 to-transparent z-10">
+          <button
+            onClick={stopCamera}
+            className="p-2.5 bg-black/40 hover:bg-black/60 rounded-full transition-all text-white cursor-pointer"
+          >
+            <X className="w-6 h-6" />
+          </button>
+          
+          <div className="text-xs font-black tracking-widest text-slate-300 uppercase">
+            {cameraStep === 1
+              ? (locale === "ar" ? "تصوير المنتج" : "Capture Product")
+              : cameraStep === 2
+                ? (locale === "ar" ? "قراءة تاريخ الصلاحية" : "Scan Expiry Date")
+                : cameraStep === 3
+                  ? (locale === "ar" ? "البحث بالصورة" : "Visual Search")
+                  : (locale === "ar" ? "تعديل صورة المنتج" : "Edit Product Image")}
+          </div>
+
+          <div className="flex gap-2">
+            {/* Flash Toggle */}
+            <button
+              onClick={toggleFlash}
+              className={`p-2.5 rounded-full transition-all cursor-pointer ${
+                flashOn ? "bg-amber-400 text-slate-900 shadow-md shadow-amber-400/30" : "bg-black/40 hover:bg-black/60 text-white"
+              }`}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill={flashOn ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 L3 14 H12 L11 22 L21 10 H12 Z"/></svg>
+            </button>
+            {/* Switch Camera */}
+            <button
+              onClick={toggleFacingMode}
+              className="p-2.5 bg-black/40 hover:bg-black/60 rounded-full transition-all text-white cursor-pointer"
+            >
+              <RefreshCw className="w-5.5 h-5.5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Video Feed with Camera Grid lines */}
+        <div className="relative flex-1 bg-black flex items-center justify-center overflow-hidden">
+          <video
+            ref={videoRef}
+            className="w-full h-full object-cover"
+            playsInline
+            autoPlay
+          />
+          
+          {/* Camera Grid Lines Overlay (WhatsApp style) */}
+          <div className="absolute inset-0 pointer-events-none grid grid-cols-3 grid-rows-3 opacity-20">
+            <div className="border-r border-b border-white" />
+            <div className="border-r border-b border-white" />
+            <div className="border-b border-white" />
+            <div className="border-r border-b border-white" />
+            <div className="border-r border-b border-white" />
+            <div className="border-b border-white" />
+            <div className="border-r border-white" />
+            <div className="border-r border-white" />
+            <div />
+          </div>
+        </div>
+
+        {/* Bottom Shutter Area */}
+        <div className="p-8 flex items-center justify-center bg-gradient-to-t from-black/80 to-transparent z-10">
+          <button
+            onClick={capturePhoto}
+            className="w-18 h-18 rounded-full border-4 border-white flex items-center justify-center p-1 cursor-pointer transition-all hover:scale-105 active:scale-95 bg-transparent"
+          >
+            <div className="w-full h-full rounded-full bg-white" />
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

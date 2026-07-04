@@ -93,7 +93,9 @@ async function initDB() {
       );
     `);
     
-    console.log("[Postgres] Database initialization complete.");
+    // Notify Supabase's PostgREST API gateway to reload its schema cache
+    await client.query("NOTIFY pgrst, 'reload schema';");
+    console.log("[Postgres] Database initialization complete and schema reload notified.");
   } catch (err) {
     console.error("[Postgres] Error initializing database:", err);
   } finally {
@@ -378,9 +380,9 @@ app.post("/api/ocr/package", async (req, res) => {
     const promptText = `Analyze this product packaging photo.
 Extract the product details strictly in JSON.
 1. Extract the prominent product "name" in its main printed language.
+   CRITICAL: If the packaging displays a size, weight, volume, or packaging descriptor (e.g. 1L, 500g, Large Pack, Small Pack, 250ml, Pack of 6), you MUST append this size/volume/descriptor directly to the product name (e.g. "Alpro Almond 1L" or "Pötibör 450g Big Pack"). This is crucial to distinguish it from other sizes of the same product.
 2. Extract the "brand" or manufacturer name (e.g. Alpro, Nestle, Ritter Sport, etc.).
-3. Identify all distinct languages present on the packaging (like Deutsch, English, Türkçe, العربية, etc.). For each language found, provide the product name as printed on the package in that language. Put this in "multilingualNames".
-`;
+3. Identify all distinct languages present on the packaging (like Deutsch, English, Türkçe, العربية, etc.). For each language found, provide the product name as printed on the package in that language, also appending the size/descriptor. Put this in "multilingualNames".`;
 
     const config = {
       responseMimeType: "application/json",

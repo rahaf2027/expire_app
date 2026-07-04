@@ -39,7 +39,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { localization } from "./localization";
 import { sampleProducts, SampleProduct } from "./samples";
 import { Product, ActivityLog, Branch, MultilingualName } from "./types";
-import { fetchBranchData, syncBranchData as dbSyncBranchData, checkDatabaseHealth, deleteProductFromDb } from "./lib/database";
+import { fetchBranchData, syncBranchData as dbSyncBranchData, checkDatabaseHealth, deleteProductFromDb, deleteLogFromDb } from "./lib/database";
 import { analyzePackage, analyzeExpiry } from "./lib/gemini";
 
 const compressImage = (base64Str: string, maxDim = 600): Promise<string> => {
@@ -800,6 +800,26 @@ export default function App() {
       await syncBranchData([], [newLog]);
     } catch (err) {
       console.error("Error deleting product from database:", err);
+    }
+  };
+
+  // Delete a single activity log
+  const deleteLog = async (logId: string) => {
+    const confirmed = window.confirm(
+      locale === "ar"
+        ? "هل أنت متأكد من رغبتك في حذف هذا السجل من العمليات اليومية؟"
+        : "Are you sure you want to delete this activity log?"
+    );
+    if (!confirmed) return;
+
+    const updated = logs.filter((l) => l.id !== logId);
+    setLogs(updated);
+
+    try {
+      await deleteLogFromDb(logId);
+    } catch (err: any) {
+      console.error("Error deleting log from database:", err);
+      alert(locale === "ar" ? `فشل حذف السجل من قاعدة البيانات: ${err?.message || err}` : `Failed to delete log from database: ${err?.message || err}`);
     }
   };
 
@@ -3206,8 +3226,17 @@ export default function App() {
                           </span>
                         </div>
                       </div>
-                      <div className="text-[10px] text-slate-400 font-bold font-mono shrink-0">
-                        {t.logFormat.replace("{employee}", log.employeeName).replace("{time}", dateStr)}
+                      <div className="flex items-center gap-2 shrink-0">
+                        <div className="text-[10px] text-slate-400 font-bold font-mono">
+                          {t.logFormat.replace("{employee}", log.employeeName).replace("{time}", dateStr)}
+                        </div>
+                        <button
+                          onClick={() => deleteLog(log.id)}
+                          title={locale === "ar" ? "حذف السجل" : "Delete Log"}
+                          className="p-1 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </div>
                   );

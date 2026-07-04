@@ -183,6 +183,18 @@ export async function deleteProductFromDb(productId: string): Promise<void> {
   }
 }
 
+// ─── Delete a single activity log explicitly ──────────────────────────────────
+export async function deleteLogFromDb(logId: string): Promise<void> {
+  const { error } = await supabase
+    .from("activity_logs")
+    .delete()
+    .eq("id", logId);
+  if (error) {
+    console.error("[DB] Delete log error:", error);
+    throw error;
+  }
+}
+
 
 // ─── Health check: verify Supabase connection ─────────────────────────────────
 export async function checkDatabaseHealth(): Promise<boolean> {

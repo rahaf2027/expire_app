@@ -22,7 +22,7 @@ export interface Product {
   expiryDate: string; // YYYY-MM-DD
   imageUrl: string; // Package image base64 or mock sample URL
   expiryImageUrl?: string; // Expiry image base64 or mock sample URL
-  status: 'active' | 'sold' | 'shelf_checked' | 'handled';
+  status: 'active' | 'sold' | 'shelf_checked' | 'handled' | 'trash';
   quantity: number; // total units in pieces
   quantityUnit?: 'pcs' | 'cartons';
   unitsPerCarton?: number;

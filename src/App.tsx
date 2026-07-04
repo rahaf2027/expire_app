@@ -32,7 +32,9 @@ import {
   PlusCircle,
   Minus,
   Edit,
-  Package
+  Package,
+  BellRing,
+  SlidersHorizontal
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -114,9 +116,27 @@ export default function App() {
   const [selectedFilter, setSelectedFilter] = useState<string>("all");
   const [notifTime, setNotifTime] = useState("08:00");
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [dailyAlertsEnabled, setDailyAlertsEnabled] = useState(() => {
+    const val = localStorage.getItem("expiry_daily_alerts_enabled");
+    return val !== "false";
+  });
+  const [activeSettingsTab, setActiveSettingsTab] = useState<"profile" | "alerts" | "about">("profile");
   const [showNotificationToast, setShowNotificationToast] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
   const [notifOpen, setNotifOpen] = useState(false);
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    isDanger?: boolean;
+  }>({
+    isOpen: false,
+    title: "",
+    message: "",
+    onConfirm: () => {},
+    isDanger: false,
+  });
 
   // App initialization & synchronization
   const [isLoading, setIsLoading] = useState(true);
@@ -143,6 +163,7 @@ export default function App() {
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraStep, setCameraStep] = useState<1 | 2 | 3 | 4 | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const isRegisteringRef = useRef(false);
 
   // Duplicate Check Overlay states
   const [duplicateFound, setDuplicateFound] = useState<Product | null>(null);
@@ -234,6 +255,11 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("expiry_tracker_locale", locale);
   }, [locale]);
+
+  // Handle daily alerts storage
+  useEffect(() => {
+    localStorage.setItem("expiry_daily_alerts_enabled", dailyAlertsEnabled ? "true" : "false");
+  }, [dailyAlertsEnabled]);
 
   // Camera handling helper with facing mode parameter
   const startCamera = async (step: 1 | 2 | 3 | 4, currentFacingMode = facingMode) => {
@@ -520,9 +546,16 @@ export default function App() {
 
   // Finish Registration & Perform Duplicate / Flavor Checks
   const finishProductRegistration = () => {
+    setRegistrationError(null);
+
+    if (isRegisteringRef.current) return;
+    isRegisteringRef.current = true;
+
     const finalDate = manualExpiryInput || extractedExpiryDate;
     if (!finalDate) {
-      alert("يرجى اختيار تاريخ الصلاحية للمنتج!");
+      const msg = locale === "ar" ? "⚠️ يرجى اختيار تاريخ الصلاحية للمنتج!" : "⚠️ Please select the expiry date!";
+      setRegistrationError(msg);
+      isRegisteringRef.current = false;
       return;
     }
 
@@ -571,11 +604,13 @@ export default function App() {
     );
 
     if (match) {
-      setRegistrationError(
-        locale === "ar"
-          ? `هذا المنتج (${proposedProduct.name}) موجود بالفعل بنفس تاريخ الصلاحية (${finalDate.split("-").reverse().join(".")})!`
-          : `This product (${proposedProduct.name}) already exists with the same expiry date (${finalDate.split("-").reverse().join(".")})!`
-      );
+      const formattedDate = finalDate.split("-").reverse().join(".");
+      const errMsg = locale === "ar"
+        ? `هذا المنتج (${proposedProduct.name}) موجود بالفعل بنفس تاريخ الصلاحية (${formattedDate}) ولا يمكن تكراره!`
+        : `This product (${proposedProduct.name}) already exists with the exact same expiry date (${formattedDate}) and cannot be duplicated!`;
+      
+      setRegistrationError(errMsg);
+      isRegisteringRef.current = false;
       return; // Block adding
     }
 
@@ -618,6 +653,9 @@ export default function App() {
 
     // reset forms
     resetForms();
+    
+    // Unlock submission ref
+    isRegisteringRef.current = false;
   };
 
   const resolveDuplicateWithMerge = () => {
@@ -777,70 +815,216 @@ export default function App() {
   // Quick deletion helper
   const deleteProduct = async (id: string) => {
     const targetProduct = products.find((p) => p.id === id);
-    const updated = products.filter((p) => p.id !== id);
-    setProducts(updated);
+    if (!targetProduct) return;
+
     setDeletingProductId(null);
     if (viewingProduct?.id === id) setViewingProduct(null);
 
-    const newLog: ActivityLog = {
-      id: "log_" + Date.now(),
-      branchId: activeBranch,
-      productId: id,
-      productName: targetProduct?.name || "Product",
-      brand: targetProduct?.brand || "",
-      employeeName: activeEmployee || "Employee",
-      action: "deleted",
-      timestamp: new Date().toISOString(),
-    };
+    // If it's an active product, we move it to the Recycle Bin (status = "trash")
+    if (targetProduct.status === "active") {
+      const updatedProducts = products.map((p) => {
+        if (p.id === id) {
+          return {
+            ...p,
+            status: "trash" as const,
+            updatedAt: new Date().toISOString(),
+            logs: [
+              ...p.logs,
+              {
+                employeeName: activeEmployee || "Employee",
+                action: "moved_to_trash",
+                timestamp: new Date().toISOString(),
+              },
+            ],
+          };
+        }
+        return p;
+      });
 
-    const updatedLogs = [newLog, ...logs];
-    setLogs(updatedLogs);
+      const newLog: ActivityLog = {
+        id: "log_" + Date.now(),
+        branchId: activeBranch,
+        productId: id,
+        productName: targetProduct.name,
+        brand: targetProduct.brand,
+        employeeName: activeEmployee || "Employee",
+        action: "deleted", // keep action as "deleted" for activity log history compatibility
+        timestamp: new Date().toISOString(),
+      };
 
-    try {
-      await deleteProductFromDb(id);
-      await syncBranchData([], [newLog]);
-    } catch (err) {
-      console.error("Error deleting product from database:", err);
+      const updatedLogs = [newLog, ...logs];
+      setProducts(updatedProducts);
+      setLogs(updatedLogs);
+
+      const updatedProd = updatedProducts.find((p) => p.id === id);
+      if (updatedProd) {
+        await syncBranchData([updatedProd], [newLog]);
+      }
+    } else {
+      // If it is in the Archive (sold, checked, handled) or in the Trash (trash), delete permanently!
+      const updatedProducts = products.filter((p) => p.id !== id);
+      setProducts(updatedProducts);
+
+      const newLog: ActivityLog = {
+        id: "log_" + Date.now(),
+        branchId: activeBranch,
+        productId: id,
+        productName: targetProduct.name,
+        brand: targetProduct.brand,
+        employeeName: activeEmployee || "Employee",
+        action: "deleted",
+        timestamp: new Date().toISOString(),
+      };
+
+      const updatedLogs = [newLog, ...logs];
+      setLogs(updatedLogs);
+
+      try {
+        await deleteProductFromDb(id);
+        await syncBranchData([], [newLog]);
+      } catch (err) {
+        console.error("Error permanently deleting product from database:", err);
+      }
     }
   };
 
   // Delete a single activity log
   const deleteLog = async (logId: string) => {
-    const confirmed = window.confirm(
-      locale === "ar"
+    setConfirmModal({
+      isOpen: true,
+      title: locale === "ar" ? "حذف سجل العمليات" : "Delete Activity Log",
+      message: locale === "ar"
         ? "هل أنت متأكد من رغبتك في حذف هذا السجل من العمليات اليومية؟"
-        : "Are you sure you want to delete this activity log?"
-    );
-    if (!confirmed) return;
-
-    const updated = logs.filter((l) => l.id !== logId);
-    setLogs(updated);
-
-    try {
-      await deleteLogFromDb(logId);
-    } catch (err: any) {
-      console.error("Error deleting log from database:", err);
-      alert(locale === "ar" ? `فشل حذف السجل من قاعدة البيانات: ${err?.message || err}` : `Failed to delete log from database: ${err?.message || err}`);
-    }
+        : "Are you sure you want to delete this activity log?",
+      isDanger: true,
+      onConfirm: async () => {
+        const updated = logs.filter((l) => l.id !== logId);
+        setLogs(updated);
+        try {
+          await deleteLogFromDb(logId);
+        } catch (err: any) {
+          console.error("Error deleting log from database:", err);
+          setConfirmModal({
+            isOpen: true,
+            title: locale === "ar" ? "خطأ في قاعدة البيانات" : "Database Error",
+            message: locale === "ar" ? `فشل حذف السجل: ${err?.message || err}` : `Failed to delete log: ${err?.message || err}`,
+            onConfirm: () => {},
+            isDanger: true
+          });
+        }
+      }
+    });
   };
 
   // Delete all activity logs
   const clearAllLogs = async () => {
-    const confirmed = window.confirm(
-      locale === "ar"
+    setConfirmModal({
+      isOpen: true,
+      title: locale === "ar" ? "حذف السجلات اليومية" : "Clear All Activity Logs",
+      message: locale === "ar"
         ? "🚨 هل أنت متأكد تماماً من رغبتك في حذف جميع السجلات اليومية لهذا الفرع؟ لا يمكن التراجع عن هذا الإجراء!"
-        : "🚨 Are you sure you want to clear all activity logs for this branch? This action cannot be undone!"
-    );
-    if (!confirmed) return;
+        : "🚨 Are you sure you want to clear all activity logs for this branch? This action cannot be undone!",
+      isDanger: true,
+      onConfirm: async () => {
+        setLogs([]);
+        try {
+          await clearAllLogsFromDb(activeBranch);
+        } catch (err: any) {
+          console.error("Error clearing logs from database:", err);
+          setConfirmModal({
+            isOpen: true,
+            title: locale === "ar" ? "خطأ في قاعدة البيانات" : "Database Error",
+            message: locale === "ar" ? `فشل مسح السجلات: ${err?.message || err}` : `Failed to clear logs: ${err?.message || err}`,
+            onConfirm: () => {},
+            isDanger: true
+          });
+        }
+      }
+    });
+  };
 
-    setLogs([]);
+  // Permanently clear all products inside the Recycle Bin (Trash)
+  const clearAllTrash = async () => {
+    const trashProducts = products.filter((p) => p.status === "trash");
+    if (trashProducts.length === 0) return;
 
-    try {
-      await clearAllLogsFromDb(activeBranch);
-    } catch (err: any) {
-      console.error("Error clearing logs from database:", err);
-      alert(locale === "ar" ? `فشل مسح السجلات من قاعدة البيانات: ${err?.message || err}` : `Failed to clear logs from database: ${err?.message || err}`);
-    }
+    setConfirmModal({
+      isOpen: true,
+      title: locale === "ar" ? "مسح سلة المحذوفات" : "Empty Recycle Bin",
+      message: locale === "ar"
+        ? "⚠️ هل أنت متأكد تماماً من رغبتك في حذف جميع المنتجات الموجودة في سلة المحذوفات بشكل نهائي؟ لا يمكن استعادتها لاحقاً!"
+        : "⚠️ Are you sure you want to permanently delete all products in the Recycle Bin? This action cannot be undone!",
+      isDanger: true,
+      onConfirm: async () => {
+        const trashIds = trashProducts.map((p) => p.id);
+        const updatedProducts = products.filter((p) => !trashIds.includes(p.id));
+        setProducts(updatedProducts);
+
+        const newLogs: ActivityLog[] = trashProducts.map((p) => ({
+          id: "log_" + Date.now() + "_" + p.id,
+          branchId: activeBranch,
+          productId: p.id,
+          productName: p.name,
+          brand: p.brand,
+          employeeName: activeEmployee || "Employee",
+          action: "deleted" as const,
+          timestamp: new Date().toISOString(),
+        }));
+
+        setLogs((prev) => [...newLogs, ...prev]);
+
+        try {
+          for (const id of trashIds) {
+            await deleteProductFromDb(id);
+          }
+          await syncBranchData([], newLogs);
+        } catch (err) {
+          console.error("Error emptying Recycle Bin:", err);
+        }
+      }
+    });
+  };
+
+  // Permanently clear all products inside the Archive (Sold/Handled)
+  const clearAllArchive = async () => {
+    const archiveProducts = products.filter((p) => p.status === "sold" || p.status === "shelf_checked" || p.status === "handled");
+    if (archiveProducts.length === 0) return;
+
+    setConfirmModal({
+      isOpen: true,
+      title: locale === "ar" ? "مسح الأرشيف" : "Empty Archive",
+      message: locale === "ar"
+        ? "⚠️ هل أنت متأكد تماماً من رغبتك في حذف جميع المنتجات الموجودة في الأرشيف بشكل نهائي؟ لا يمكن التراجع عن هذا الإجراء!"
+        : "⚠️ Are you sure you want to permanently delete all products in the Archive? This action cannot be undone!",
+      isDanger: true,
+      onConfirm: async () => {
+        const archiveIds = archiveProducts.map((p) => p.id);
+        const updatedProducts = products.filter((p) => !archiveIds.includes(p.id));
+        setProducts(updatedProducts);
+
+        const newLogs: ActivityLog[] = archiveProducts.map((p) => ({
+          id: "log_" + Date.now() + "_" + p.id,
+          branchId: activeBranch,
+          productId: p.id,
+          productName: p.name,
+          brand: p.brand,
+          employeeName: activeEmployee || "Employee",
+          action: "deleted" as const,
+          timestamp: new Date().toISOString(),
+        }));
+
+        setLogs((prev) => [...newLogs, ...prev]);
+
+        try {
+          for (const id of archiveIds) {
+            await deleteProductFromDb(id);
+          }
+          await syncBranchData([], newLogs);
+        } catch (err) {
+          console.error("Error emptying Archive:", err);
+        }
+      }
+    });
   };
 
   // Edit product helpers
@@ -1030,13 +1214,17 @@ export default function App() {
 
   // Filter and search logic
   const filteredProducts = products.filter((p) => {
-    // If selectedFilter is not "archive", only show active products
-    if (selectedFilter !== "archive" && p.status !== "active") {
-      return false;
+    // Handle Recycle Bin
+    if (selectedFilter === "trash") {
+      if (p.status !== "trash") return false;
     }
-    // If selectedFilter is "archive", only show non-active (sold, checked, handled) products
-    if (selectedFilter === "archive" && p.status === "active") {
-      return false;
+    // Handle Archive
+    else if (selectedFilter === "archive") {
+      if (p.status !== "sold" && p.status !== "shelf_checked" && p.status !== "handled") return false;
+    }
+    // Handle Active Filters (all, today, tomorrow, etc.)
+    else {
+      if (p.status !== "active") return false;
     }
 
     // Search filter
@@ -2557,19 +2745,35 @@ export default function App() {
                   animate={{ scale: 1, y: 0 }}
                   exit={{ scale: 0.9, y: 20 }}
                   transition={{ type: "spring", stiffness: 320, damping: 28 }}
-                  className="bg-white rounded-3xl max-w-sm w-full shadow-2xl overflow-hidden border border-slate-200 p-6"
+                  className="bg-white rounded-3xl max-w-sm w-full shadow-2xl overflow-hidden border border-slate-200 p-6 select-none"
                   onClick={(e) => e.stopPropagation()}
                 >
                   <div className="w-14 h-14 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
                     <Trash2 className="w-7 h-7 text-red-600" />
                   </div>
                   <h3 className="text-base font-black text-slate-800 text-center mb-1">
-                    {locale === "ar" ? "تأكيد الحذف" : "Confirm Delete"}
+                    {(() => {
+                      const target = products.find(p => p.id === deletingProductId);
+                      if (target && target.status === "active") {
+                        return locale === "ar" ? "نقل لسلة المحذوفات" : "Move to Recycle Bin";
+                      } else {
+                        return locale === "ar" ? "حذف نهائي" : "Confirm Permanent Delete";
+                      }
+                    })()}
                   </h3>
                   <p className="text-xs text-slate-500 text-center mb-6">
-                    {locale === "ar"
-                      ? "هل أنت متأكد من حذف هذا المنتج؟ لا يمكن التراجع عن هذه العملية."
-                      : "Are you sure you want to delete this product? This action cannot be undone."}
+                    {(() => {
+                      const target = products.find(p => p.id === deletingProductId);
+                      if (target && target.status === "active") {
+                        return locale === "ar"
+                          ? "هل أنت متأكد من نقل هذا المنتج إلى سلة المحذوفات؟ يمكنك استعادته أو حذفه نهائياً من هناك."
+                          : "Are you sure you want to move this product to the Recycle Bin? You can restore it or permanently delete it later.";
+                      } else {
+                        return locale === "ar"
+                          ? "⚠️ تنبيه: هل أنت متأكد من حذف هذا المنتج بشكل نهائي؟ لا يمكن استعادة هذا المنتج بعد حذفه!"
+                          : "⚠️ Warning: Are you sure you want to delete this product permanently? This product cannot be restored after deletion!";
+                      }
+                    })()}
                   </p>
                   <div className="flex gap-3">
                     <button
@@ -2582,7 +2786,14 @@ export default function App() {
                       onClick={() => deleteProduct(deletingProductId)}
                       className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition-colors"
                     >
-                      {locale === "ar" ? "حذف نهائياً" : "Delete"}
+                      {(() => {
+                        const target = products.find(p => p.id === deletingProductId);
+                        if (target && target.status === "active") {
+                          return locale === "ar" ? "نقل للسلة" : "Move to Trash";
+                        } else {
+                          return locale === "ar" ? "حذف نهائياً" : "Delete Permanently";
+                        }
+                      })()}
                     </button>
                   </div>
                 </motion.div>
@@ -2921,7 +3132,8 @@ export default function App() {
               { id: "tomorrow", label: t.filterTomorrow },
               { id: "2days", label: t.filter2Days },
               { id: "1week", label: t.filter1Week },
-              { id: "archive", label: locale === "ar" ? "الأرشيف (المباعة/المكتملة)" : "Archive (Sold/Handled)" }
+              { id: "archive", label: locale === "ar" ? "الأرشيف (المباعة/المكتملة)" : "Archive (Sold/Handled)" },
+              { id: "trash", label: locale === "ar" ? "سلة المحذوفات" : "Recycle Bin" }
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -2948,14 +3160,31 @@ export default function App() {
                 </div>
                 <div>
                   <h3 className="text-sm font-black text-slate-900 tracking-tight">
-                    {locale === "ar" ? "قائمة المنتجات النشطة بالرفوف" : "Active Shelf Products"}
+                    {selectedFilter === "archive" 
+                      ? (locale === "ar" ? "أرشيف عمليات الفرع" : "Branch Archived Products")
+                      : selectedFilter === "trash"
+                        ? (locale === "ar" ? "سلة المحذوفات" : "Recycle Bin")
+                        : (locale === "ar" ? "قائمة المنتجات النشطة بالرفوف" : "Active Shelf Products")}
                   </h3>
                   <p className="text-[11px] text-slate-400 font-medium mt-0.5">
-                    {locale === "ar" ? "الأوراق الحالية للفحص والمراجعة" : "Live inventory · Click any card for full details"}
+                    {selectedFilter === "archive"
+                      ? (locale === "ar" ? "قائمة المواد المباعة والمعالجة سابقاً" : "List of sold and processed items")
+                      : selectedFilter === "trash"
+                        ? (locale === "ar" ? "المنتجات المحذوفة مؤقتاً والجاهزة للاستعادة" : "Temporarily deleted items ready to restore")
+                        : (locale === "ar" ? "الأوراق الحالية للفحص والمراجعة" : "Live inventory · Click any card for full details")}
                   </p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                {(selectedFilter === "archive" || selectedFilter === "trash") && (
+                  <button
+                    onClick={selectedFilter === "archive" ? clearAllArchive : clearAllTrash}
+                    className="px-3.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-650 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs border border-red-200/50 active:scale-95 shrink-0"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>{locale === "ar" ? "مسح الكل نهائياً" : "Clear All"}</span>
+                  </button>
+                )}
                 <div className="flex items-center gap-1.5 bg-slate-900 text-white px-3 py-1.5 rounded-full text-[11px] font-bold">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                   {filteredProducts.length} {locale === "ar" ? "منتج" : "products"}
@@ -2990,7 +3219,7 @@ export default function App() {
                 </p>
               </div>
             ) : (
-              <div className="flex flex-col gap-5">
+              <div className="flex flex-col gap-5 max-h-[720px] overflow-y-auto pr-2 pb-6 scroll-smooth">
                 <AnimatePresence initial={false}>
                   {groupedProductsList.map((group, groupIdx) => {
                     const totalGroupQuantity = group.batches.reduce((sum, b) => sum + b.quantity, 0);
@@ -3005,7 +3234,7 @@ export default function App() {
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, height: 0 }}
                         transition={{ delay: groupIdx * 0.035, type: "spring", stiffness: 340, damping: 30 }}
-                        className="group relative flex flex-col md:flex-row items-stretch bg-white border border-slate-200/80 rounded-3xl shadow-xs hover:shadow-md hover:border-slate-300 transition-all duration-250 overflow-hidden"
+                        className="group relative flex flex-col md:flex-row items-stretch bg-white border border-slate-200/80 rounded-3xl shadow-xs hover:shadow-md hover:border-slate-300 transition-all duration-250 overflow-hidden shrink-0"
                         dir={locale === "ar" ? "rtl" : "ltr"}
                       >
                         {/* Left/Top Urgency accent bar using nearest batch */}
@@ -3350,7 +3579,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Employee Profile & Daily Alerts Modal */}
+      {/* Employee Profile & Daily Alerts Modal (Redesigned with Sidebar Tabs) */}
       <AnimatePresence>
         {isProfileOpen && (
           <motion.div
@@ -3363,86 +3592,321 @@ export default function App() {
               initial={{ scale: 0.95, y: 20 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.95, y: 20 }}
-              className="bg-white rounded-3xl max-w-md w-full overflow-hidden shadow-2xl border border-slate-200 p-6 space-y-6"
+              className="bg-white rounded-3xl max-w-2xl w-full min-h-[480px] overflow-hidden shadow-2xl border border-slate-200 flex flex-col md:flex-row relative animate-fade-in"
             >
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <h3 className="font-bold text-slate-800 text-sm font-display flex items-center gap-2">
-                  <User className="w-5 h-5 text-blue-600" />
-                  {locale === "ar" ? "الملف الشخصي وإعدادات التنبيهات" : "Profile & Alerts Settings"}
-                </h3>
-                <button
-                  onClick={() => setIsProfileOpen(false)}
-                  className="p-1 hover:bg-slate-150 rounded-lg text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
+              {/* Top Accent Line */}
+              <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 z-10" />
+
+              {/* Sidebar Navigation */}
+              <div className="w-full md:w-56 bg-slate-50 border-b md:border-b-0 md:border-l border-slate-100 p-5 flex flex-col justify-between shrink-0 pt-8" dir={locale === "ar" ? "rtl" : "ltr"}>
+                <div className="space-y-6">
+                  {/* Sidebar Title */}
+                  <div>
+                    <h3 className="font-black text-slate-800 text-sm tracking-tight flex items-center gap-2">
+                      <SlidersHorizontal className="w-4 h-4 text-blue-600" />
+                      <span>{locale === "ar" ? "الإعدادات العامة" : "Settings"}</span>
+                    </h3>
+                    <p className="text-[9px] text-slate-400 font-bold mt-1 uppercase tracking-widest">{locale === "ar" ? "لوحة التحكم" : "Preferences"}</p>
+                  </div>
+
+                  {/* Tabs List */}
+                  <div className="flex md:flex-col gap-1.5 overflow-x-auto md:overflow-x-visible pb-2 md:pb-0">
+                    <button
+                      onClick={() => setActiveSettingsTab("profile")}
+                      className={`flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap w-full text-right ${
+                        activeSettingsTab === "profile"
+                          ? "bg-blue-600 text-white shadow-md shadow-blue-500/10"
+                          : "text-slate-650 hover:bg-slate-100 hover:text-slate-900"
+                      }`}
+                    >
+                      <User className="w-4 h-4 shrink-0" />
+                      <span>{locale === "ar" ? "الملف الشخصي" : "My Profile"}</span>
+                    </button>
+
+                    <button
+                      onClick={() => setActiveSettingsTab("alerts")}
+                      className={`flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap w-full text-right ${
+                        activeSettingsTab === "alerts"
+                          ? "bg-blue-600 text-white shadow-md shadow-blue-500/10"
+                          : "text-slate-650 hover:bg-slate-100 hover:text-slate-900"
+                      }`}
+                    >
+                      <BellRing className="w-4 h-4 shrink-0" />
+                      <span>{locale === "ar" ? "إشعارات التنبيه" : "Alerts Settings"}</span>
+                    </button>
+
+                    <button
+                      onClick={() => setActiveSettingsTab("about")}
+                      className={`flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap w-full text-right ${
+                        activeSettingsTab === "about"
+                          ? "bg-blue-600 text-white shadow-md shadow-blue-500/10"
+                          : "text-slate-650 hover:bg-slate-100 hover:text-slate-900"
+                      }`}
+                    >
+                      <Info className="w-4 h-4 shrink-0" />
+                      <span>{locale === "ar" ? "معلومات التطبيق" : "About App"}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Sidebar footer badge */}
+                <div className="hidden md:block border-t border-slate-200/60 pt-4 mt-6">
+                  <div className="flex items-center gap-2 text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">
+                    <span>{locale === "ar" ? "الإصدار 2.4.0" : "v2.4.0"}</span>
+                  </div>
+                </div>
               </div>
 
-              {/* Profile Details */}
-              <div className="space-y-4">
-                <div className="flex items-center gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-200/50">
-                  <div className="w-12 h-12 rounded-full bg-blue-100 border border-blue-200 text-blue-700 flex items-center justify-center font-bold text-lg">
-                    {activeEmployee ? activeEmployee.trim().slice(0, 2).toUpperCase() : "JD"}
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-xs text-slate-400 uppercase tracking-wider">{locale === "ar" ? "الموظف النشط حالياً" : "Active Employee"}</h4>
-                    <p className="font-black text-slate-850 text-sm mt-0.5">{activeEmployee || "Employee"}</p>
-                  </div>
+              {/* Main Content Area */}
+              <div className="flex-1 flex flex-col justify-between p-6 md:p-8 pt-8 min-w-0" dir={locale === "ar" ? "rtl" : "ltr"}>
+                {/* Header Row (Close Button only) */}
+                <div className="flex justify-end items-center mb-4 shrink-0">
+                  <button
+                    onClick={() => setIsProfileOpen(false)}
+                    className="p-2 hover:bg-slate-100 active:scale-95 rounded-xl text-slate-400 hover:text-slate-700 transition-all cursor-pointer border border-transparent hover:border-slate-200"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
                 </div>
 
-                {/* Edit Employee Name Input */}
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 mb-1.5">{t.activeEmployee}</label>
-                  <div className="relative">
-                    <span className="absolute inset-y-0 left-3 flex items-center text-slate-400">
-                      <User className="w-4 h-4 text-blue-600" />
-                    </span>
-                    <input
-                      type="text"
-                      value={activeEmployee}
-                      onChange={(e) => setActiveEmployee(e.target.value)}
-                      placeholder={t.employeePlaceholder}
-                      className="w-full rounded-xl border border-slate-200 pl-10 pr-4 py-2.5 text-xs font-bold focus:border-blue-500 focus:outline-none bg-slate-50 focus:bg-white transition-all"
-                    />
-                  </div>
-                </div>
-
-                {/* Shift & Notification Config (Moved Here) */}
-                <div className="border-t border-slate-100 pt-4 space-y-3">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
-                    <Bell className="w-4 h-4 text-blue-600" />
-                    {t.notifTitle}
-                  </h4>
-                  
-                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/40 text-[11px] leading-relaxed text-slate-500 font-medium">
-                    {t.appDescription}
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-1.5">{t.notifTimeLabel}</label>
-                    <div className="flex gap-2">
-                      <div className="relative flex-1">
-                        <span className="absolute inset-y-0 left-3 flex items-center text-slate-400">
-                          <Clock className="w-4 h-4" />
-                        </span>
-                        <input
-                          type="time"
-                          value={notifTime}
-                          onChange={(e) => setNotifTime(e.target.value)}
-                          className="w-full rounded-xl border border-slate-200 pl-10 pr-4 py-2 text-xs font-bold focus:border-blue-500 focus:outline-none bg-slate-50 focus:bg-white transition-all"
-                        />
-                      </div>
-
-                      <button
-                        onClick={simulateMorningAlarm}
-                        className="bg-blue-600 hover:bg-blue-700 transition-all text-xs font-bold text-white px-3 py-2 rounded-xl flex items-center gap-1.5 shrink-0 shadow-xs"
+                {/* Dynamic Tab Panel */}
+                <div className="flex-1 min-w-0 overflow-y-auto pr-1">
+                  <AnimatePresence mode="wait">
+                    {activeSettingsTab === "profile" && (
+                      <motion.div
+                        key="profile"
+                        initial={{ opacity: 0, x: locale === "ar" ? 10 : -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: locale === "ar" ? -10 : 10 }}
+                        transition={{ duration: 0.15 }}
+                        className="space-y-6"
                       >
-                        <Bell className="w-4 h-4 text-amber-300" />
-                        <span>{t.notifBtnTest.split(" ")[1] || "محاكاة"}</span>
-                      </button>
-                    </div>
-                  </div>
+                        {/* Profile Header */}
+                        <div>
+                          <h4 className="text-base font-black text-slate-800 leading-tight">{locale === "ar" ? "الملف الشخصي" : "Profile Details"}</h4>
+                          <p className="text-[10px] font-bold text-slate-400 mt-1">{locale === "ar" ? "إعدادات وتفاصيل الموظف المسؤول عن الفرع النشط حالياً" : "Configure name details for tracking shelf activity audits"}</p>
+                        </div>
+
+                        {/* Horizontal Premium Card */}
+                        <div className="relative overflow-hidden p-5 rounded-2xl bg-gradient-to-br from-slate-50 to-slate-100/50 border border-slate-200/60 shadow-xs flex items-center gap-4">
+                          <div className="absolute -right-6 -bottom-6 w-20 h-20 bg-blue-500/5 rounded-full blur-xl pointer-events-none" />
+                          <div className="relative p-0.5 rounded-full bg-gradient-to-tr from-blue-500 to-indigo-600 shadow-md shadow-blue-500/15 shrink-0">
+                            <div className="w-14 h-14 rounded-full bg-white flex items-center justify-center font-black text-slate-800 text-lg border border-slate-100 uppercase">
+                              {activeEmployee ? activeEmployee.trim().slice(0, 2).toUpperCase() : "JD"}
+                            </div>
+                          </div>
+                          <div className="min-w-0">
+                            <h4 className="font-bold text-[10px] text-slate-400 uppercase tracking-widest leading-none">
+                              {locale === "ar" ? "الموظف النشط حالياً" : "Active Employee"}
+                            </h4>
+                            <p className="font-black text-slate-800 text-lg mt-2 truncate">
+                              {activeEmployee || "Employee"}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Edit Employee Name Input */}
+                        <div className="space-y-2">
+                          <label className="block text-xs font-bold text-slate-500">{t.activeEmployee}</label>
+                          <div className="relative group">
+                            <span className={`absolute inset-y-0 flex items-center text-slate-400 group-focus-within:text-blue-600 transition-colors ${locale === "ar" ? "right-3.5" : "left-3.5"}`}>
+                              <User className="w-4.5 h-4.5 text-blue-500" />
+                            </span>
+                            <input
+                              type="text"
+                              value={activeEmployee}
+                              onChange={(e) => setActiveEmployee(e.target.value)}
+                              placeholder={t.employeePlaceholder}
+                              dir="auto"
+                              className={`w-full rounded-xl border border-slate-200 py-3 text-xs font-bold focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 focus:outline-none bg-slate-50/50 focus:bg-white transition-all text-slate-800 ${locale === "ar" ? "pr-11 pl-4" : "pl-11 pr-4"}`}
+                            />
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+
+                    {activeSettingsTab === "alerts" && (
+                      <motion.div
+                        key="alerts"
+                        initial={{ opacity: 0, x: locale === "ar" ? 10 : -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: locale === "ar" ? -10 : 10 }}
+                        transition={{ duration: 0.15 }}
+                        className="space-y-6"
+                      >
+                        {/* Alerts Header */}
+                        <div>
+                          <h4 className="text-base font-black text-slate-800 leading-tight">{locale === "ar" ? "إعدادات التنبيه والوقت" : "Daily Expiry Alerts"}</h4>
+                          <p className="text-[10px] font-bold text-slate-400 mt-1">{locale === "ar" ? "اضبط مواقيت التنبيهات الصباحية للتشيك على الرفوف النشطة تلقائياً" : "Configure automatic daily reminders for shelf inspections"}</p>
+                        </div>
+
+                        {/* Toggle Switch */}
+                        <div className="flex items-center justify-between p-4 bg-slate-50/70 rounded-2xl border border-slate-200/50 hover:bg-slate-55 transition-colors">
+                          <div className="flex items-center gap-3">
+                            <div className={`p-2.5 rounded-xl transition-all border ${dailyAlertsEnabled ? 'bg-blue-50 text-blue-600 border-blue-100' : 'bg-slate-100 text-slate-400 border-slate-250'}`}>
+                              <Bell className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <h5 className="font-bold text-slate-800 text-xs">
+                                {locale === "ar" ? "تفعيل الإشعارات اليومية" : "Enable Daily Notifications"}
+                              </h5>
+                              <p className="text-[9px] text-slate-400 font-semibold mt-0.5 leading-normal max-w-[240px]">
+                                {locale === "ar" ? "الحصول على تنبيه صباحي بالمواد القريبة من الانتهاء" : "Receive morning alerts for items near expiry"}
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => setDailyAlertsEnabled(!dailyAlertsEnabled)}
+                            className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors duration-200 cursor-pointer ${
+                              dailyAlertsEnabled ? "bg-blue-600 justify-end" : "bg-slate-300 justify-start"
+                            }`}
+                          >
+                            <motion.div
+                              layout
+                              className="bg-white w-4 h-4 rounded-full shadow-md"
+                            />
+                          </button>
+                        </div>
+
+                        {/* Time picker control */}
+                        <div className={`space-y-4 transition-all duration-300 ${dailyAlertsEnabled ? 'opacity-100 translate-y-0' : 'opacity-40 pointer-events-none translate-y-1'}`}>
+                          <div className="space-y-2">
+                            <label className="block text-xs font-bold text-slate-500">{t.notifTimeLabel}</label>
+                            <div className="flex flex-col sm:flex-row gap-2 items-stretch">
+                              {/* Styled Time Input */}
+                              <div className="relative flex-1 flex items-center group">
+                                <span className={`absolute inset-y-0 flex items-center text-slate-400 group-focus-within:text-blue-600 transition-colors ${locale === "ar" ? "right-3.5" : "left-3.5"}`}>
+                                  <Clock className="w-4.5 h-4.5" />
+                                </span>
+                                <input
+                                  type="time"
+                                  disabled={!dailyAlertsEnabled}
+                                  value={notifTime}
+                                  onChange={(e) => setNotifTime(e.target.value)}
+                                  className={`w-full rounded-xl border border-slate-200 py-3 text-xs font-bold focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 focus:outline-none bg-slate-50/50 focus:bg-white transition-all text-slate-800 text-center ${locale === "ar" ? "pr-11 pl-4" : "pl-11 pr-4"}`}
+                                />
+                              </div>
+
+                              {/* Simulate Test Alarm Button */}
+                              <button
+                                onClick={simulateMorningAlarm}
+                                disabled={!dailyAlertsEnabled}
+                                className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 active:scale-95 text-xs font-bold text-white px-5 py-3 rounded-xl flex items-center justify-center gap-1.5 shrink-0 transition-all shadow-md shadow-blue-500/10 hover:shadow-blue-500/25 cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
+                              >
+                                <Bell className="w-4 h-4 text-amber-300" />
+                                <span>{locale === "ar" ? "محاكاة التنبيه" : "Simulate"}</span>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+
+                    {activeSettingsTab === "about" && (
+                      <motion.div
+                        key="about"
+                        initial={{ opacity: 0, x: locale === "ar" ? 10 : -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: locale === "ar" ? -10 : 10 }}
+                        transition={{ duration: 0.15 }}
+                        className="space-y-6"
+                      >
+                        {/* About Header */}
+                        <div>
+                          <h4 className="text-base font-black text-slate-800 leading-tight">{locale === "ar" ? "معلومات التطبيق وحالته" : "About App & Health Status"}</h4>
+                          <p className="text-[10px] font-bold text-slate-400 mt-1">{locale === "ar" ? "عرض تفاصيل ترخيص التطبيق وحالة الاتصال بالسيرفر" : "Verify server configurations, health status and license rules"}</p>
+                        </div>
+
+                        {/* App Description */}
+                        <div className="p-4 bg-blue-50/60 border border-blue-100 rounded-2xl text-xs leading-relaxed text-slate-650 font-medium space-y-2">
+                          <div className="flex items-center gap-1 text-blue-700 font-bold">
+                            <Sparkles className="w-4 h-4" />
+                            <span>{locale === "ar" ? "تتبع الصلاحية الذكي" : "Smart Expiry Tracker"}</span>
+                          </div>
+                          <p>{t.appDescription}</p>
+                        </div>
+
+                        {/* Database Health Badge */}
+                        <div className="p-4 bg-slate-50 border border-slate-200/60 rounded-2xl space-y-3">
+                          <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">{locale === "ar" ? "حالة الاتصال بالخادم" : "Server Connectivity"}</h5>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-slate-700">{locale === "ar" ? "قاعدة بيانات Supabase" : "Supabase Instance"}</span>
+                            <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase ${
+                              isHealthCheck.geminiConfigured
+                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                : "bg-red-50 text-red-700 border border-red-200 animate-pulse"
+                            }`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${isHealthCheck.geminiConfigured ? "bg-emerald-505 bg-emerald-500" : "bg-red-500"}`} />
+                              {isHealthCheck.geminiConfigured ? (locale === "ar" ? "متصل" : "Connected") : (locale === "ar" ? "غير متصل" : "Disconnected")}
+                            </span>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Custom Reusable Confirmation Modal */}
+      <AnimatePresence>
+        {confirmModal.isOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 15 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 15 }}
+              className="bg-white rounded-3xl max-w-md w-full overflow-hidden shadow-2xl border border-slate-200 p-6 space-y-6 relative select-none"
+              dir={locale === "ar" ? "rtl" : "ltr"}
+            >
+              {/* Header Icon & Title */}
+              <div className="flex items-start gap-4">
+                <div className={`p-3 rounded-2xl shrink-0 ${confirmModal.isDanger ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'}`}>
+                  {confirmModal.isDanger ? (
+                    <AlertTriangle className="w-6 h-6 animate-pulse" />
+                  ) : (
+                    <Info className="w-6 h-6" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-black text-slate-800 text-base leading-tight">
+                    {confirmModal.title}
+                  </h3>
+                  <p className="text-xs text-slate-500 font-bold mt-2 leading-relaxed">
+                    {confirmModal.message}
+                  </p>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
+                <button
+                  onClick={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+                  className="px-5 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-500 transition-colors cursor-pointer"
+                >
+                  {locale === "ar" ? "إلغاء" : "Cancel"}
+                </button>
+                <button
+                  onClick={() => {
+                    confirmModal.onConfirm();
+                    setConfirmModal(prev => ({ ...prev, isOpen: false }));
+                  }}
+                  className={`text-xs font-bold px-6 py-2.5 rounded-xl transition-all active:scale-95 shadow-xs cursor-pointer ${
+                    confirmModal.isDanger
+                      ? "bg-red-600 hover:bg-red-700 text-white shadow-red-650/15"
+                      : "bg-blue-600 hover:bg-blue-700 text-white shadow-blue-500/15"
+                  }`}
+                >
+                  {locale === "ar" ? "تأكيد" : "Confirm"}
+                </button>
               </div>
             </motion.div>
           </motion.div>

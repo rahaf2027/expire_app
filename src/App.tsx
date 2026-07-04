@@ -39,7 +39,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { localization } from "./localization";
 import { sampleProducts, SampleProduct } from "./samples";
 import { Product, ActivityLog, Branch, MultilingualName } from "./types";
-import { fetchBranchData, syncBranchData as dbSyncBranchData, checkDatabaseHealth } from "./lib/database";
+import { fetchBranchData, syncBranchData as dbSyncBranchData, checkDatabaseHealth, deleteProductFromDb } from "./lib/database";
 import { analyzePackage, analyzeExpiry } from "./lib/gemini";
 
 export default function App() {
@@ -673,12 +673,18 @@ export default function App() {
   };
 
   // Quick deletion helper
-  const deleteProduct = (id: string) => {
+  const deleteProduct = async (id: string) => {
     const updated = products.filter((p) => p.id !== id);
     setProducts(updated);
-    syncBranchData(updated, logs);
     setDeletingProductId(null);
     if (viewingProduct?.id === id) setViewingProduct(null);
+    
+    try {
+      await deleteProductFromDb(id);
+      await syncBranchData(updated, logs);
+    } catch (err) {
+      console.error("Error deleting product from database:", err);
+    }
   };
 
   // Edit product helpers
@@ -866,7 +872,16 @@ export default function App() {
   const safeCount = activeProducts.filter((p) => getDaysRemaining(p.expiryDate) > 7).length;
 
   // Filter and search logic
-  const filteredProducts = activeProducts.filter((p) => {
+  const filteredProducts = products.filter((p) => {
+    // If selectedFilter is not "archive", only show active products
+    if (selectedFilter !== "archive" && p.status !== "active") {
+      return false;
+    }
+    // If selectedFilter is "archive", only show non-active (sold, checked, handled) products
+    if (selectedFilter === "archive" && p.status === "active") {
+      return false;
+    }
+
     // Search filter
     const matchesSearch =
       p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -1248,7 +1263,7 @@ export default function App() {
                 }`}
               >
                 <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">{t.statsTotal}</p>
-                <p className="text-3xl font-black text-slate-800 leading-none">{activeProducts.length}</p>
+                <p className="text-3xl font-black text-slate-800 leading-none">{products.length}</p>
               </div>
             </div>
           </div>
@@ -2691,7 +2706,8 @@ export default function App() {
               { id: "today", label: t.filterToday },
               { id: "tomorrow", label: t.filterTomorrow },
               { id: "2days", label: t.filter2Days },
-              { id: "1week", label: t.filter1Week }
+              { id: "1week", label: t.filter1Week },
+              { id: "archive", label: locale === "ar" ? "الأرشيف (المباعة/المكتملة)" : "Archive (Sold/Handled)" }
             ].map((tab) => (
               <button
                 key={tab.id}

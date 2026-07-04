@@ -64,7 +64,7 @@ export async function fetchBranchData(branchId: string): Promise<{ products: Pro
   return { products, logs };
 }
 
-// ─── Sync (upsert + delete) products and logs for a branch ───────────────────
+// ─── Sync (upsert) products and logs for a branch ───────────────────
 export async function syncBranchData(
   branchId: string,
   products: Product[],
@@ -96,23 +96,6 @@ export async function syncBranchData(
       .upsert(rows, { onConflict: "id" });
 
     if (upsertErr) console.error("[DB] Upsert products error:", upsertErr);
-
-    // Delete products in DB for this branch that are NOT in the incoming list
-    const incomingIds = products.map((p) => p.id);
-    const { error: deleteErr } = await supabase
-      .from("products")
-      .delete()
-      .eq("branch_id", branchId)
-      .not("id", "in", `(${incomingIds.join(",")})`);
-
-    if (deleteErr) console.error("[DB] Delete stale products error:", deleteErr);
-  } else {
-    // No products → delete all for this branch
-    const { error } = await supabase
-      .from("products")
-      .delete()
-      .eq("branch_id", branchId);
-    if (error) console.error("[DB] Delete all products error:", error);
   }
 
   // 2. Upsert activity logs (insert only, no delete)
@@ -135,6 +118,19 @@ export async function syncBranchData(
     if (logErr) console.error("[DB] Upsert logs error:", logErr);
   }
 }
+
+// ─── Delete a single product explicitly ───────────────────────────────────────
+export async function deleteProductFromDb(productId: string): Promise<void> {
+  const { error } = await supabase
+    .from("products")
+    .delete()
+    .eq("id", productId);
+  if (error) {
+    console.error("[DB] Delete product error:", error);
+    throw error;
+  }
+}
+
 
 // ─── Health check: verify Supabase connection ─────────────────────────────────
 export async function checkDatabaseHealth(): Promise<boolean> {

@@ -83,6 +83,116 @@ const compressImage = (base64Str: string, maxDim = 600): Promise<string> => {
   });
 };
 
+/**
+ * Normalizes user manual date input into YYYY-MM-DD format.
+ * Supports:
+ * - DD/MM/YYYY
+ * - DD.MM.YYYY
+ * - DD-MM-YYYY
+ * - YYYY-MM-DD
+ * - YYYY/MM/DD
+ * - YYYY.MM.DD
+ */
+const parseAndNormalizeDate = (input: string): string => {
+  const clean = input.trim();
+  if (!clean) return "";
+
+  const parts = clean.split(/[\/\.\-]/);
+  if (parts.length !== 3) {
+    const parsed = Date.parse(clean);
+    if (!isNaN(parsed)) {
+      return new Date(parsed).toISOString().split("T")[0];
+    }
+    return clean;
+  }
+
+  let day = "";
+  let month = "";
+  let year = "";
+
+  const part0 = parts[0];
+  const part2 = parts[2];
+
+  if (part0.length === 4) {
+    year = part0;
+    month = parts[1];
+    day = part2;
+  } else if (part2.length === 4) {
+    year = part2;
+    const p0 = parseInt(parts[0], 10);
+    const p1 = parseInt(parts[1], 10);
+
+    if (p0 > 12 && p1 <= 12) {
+      day = parts[0];
+      month = parts[1];
+    } else if (p1 > 12 && p0 <= 12) {
+      month = parts[0];
+      day = parts[1];
+    } else {
+      day = parts[0];
+      month = parts[1];
+    }
+  } else if (part0.length === 2 && part2.length === 2) {
+    const yy = parseInt(part2, 10);
+    year = (yy < 50 ? 2000 + yy : 1900 + yy).toString();
+    const p0 = parseInt(parts[0], 10);
+    const p1 = parseInt(parts[1], 10);
+    if (p0 > 12 && p1 <= 12) {
+      day = parts[0];
+      month = parts[1];
+    } else {
+      day = parts[0];
+      month = parts[1];
+    }
+  } else {
+    return clean;
+  }
+
+  day = day.padStart(2, '0');
+  month = month.padStart(2, '0');
+
+  const testDate = `${year}-${month}-${day}`;
+  const timestamp = Date.parse(testDate);
+  if (!isNaN(timestamp)) {
+    return testDate;
+  }
+
+  return clean;
+};
+
+const formatDateToDisplay = (dateStr: string): string => {
+  if (!dateStr) return "";
+  const parts = dateStr.split("-");
+  if (parts.length === 3) {
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+  return dateStr;
+};
+
+const normalizeName = (name: string): string => {
+  if (!name) return "";
+  let res = name.trim().toLowerCase();
+  
+  // Normalize Arabic characters to avoid spelling duplicates
+  res = res.replace(/[أإآإ]/g, 'ا');
+  res = res.replace(/ة/g, 'ه');
+  res = res.replace(/ى/g, 'ي');
+  res = res.replace(/ؤ/g, 'و');
+  res = res.replace(/ئ/g, 'ي');
+  res = res.replace(/گ/g, 'ك');
+  res = res.replace(/پ/g, 'ب');
+  res = res.replace(/ژ/g, 'ز');
+  res = res.replace(/چ/g, 'ج');
+  
+  // Remove non-alphanumeric characters but preserve spaces
+  res = res.replace(/[^a-z0-9\u0600-\u06FF\s]/g, '');
+  
+  // Replace multiple spaces with a single space
+  res = res.replace(/\s+/g, ' ');
+  
+  return res.trim();
+};
+
 export default function App() {
   // Localization state
   const [locale, setLocale] = useState<string>(() => {
@@ -120,7 +230,7 @@ export default function App() {
     const val = localStorage.getItem("expiry_daily_alerts_enabled");
     return val !== "false";
   });
-  const [activeSettingsTab, setActiveSettingsTab] = useState<"profile" | "alerts" | "about">("profile");
+  const [activeSettingsTab, setActiveSettingsTab] = useState<"profile" | "alerts">("profile");
   const [showNotificationToast, setShowNotificationToast] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
   const [notifOpen, setNotifOpen] = useState(false);
@@ -174,6 +284,7 @@ export default function App() {
   const [editingName, setEditingName] = useState("");
   const [editingBrand, setEditingBrand] = useState("");
   const [editingExpiryDate, setEditingExpiryDate] = useState("");
+  const [editingExpiryDateText, setEditingExpiryDateText] = useState("");
   const [editingQuantity, setEditingQuantity] = useState<number>(1);
   const [editingQuantityUnit, setEditingQuantityUnit] = useState<'pcs' | 'cartons'>("pcs");
   const [editingUnitsPerCarton, setEditingUnitsPerCarton] = useState<number>(12);
@@ -507,7 +618,7 @@ export default function App() {
       // Use mock date instantly for sample products (no API call needed)
       if (isMock && targetDate) {
         setExtractedExpiryDate(targetDate);
-        setManualExpiryInput(targetDate);
+        setManualExpiryInput(formatDateToDisplay(targetDate));
         setRegisterStep(3);
         return;
       }
@@ -516,15 +627,15 @@ export default function App() {
       const data = await analyzeExpiry(imageBase64);
       if (data.expiryDate) {
         setExtractedExpiryDate(data.expiryDate);
-        setManualExpiryInput(data.expiryDate);
+        setManualExpiryInput(formatDateToDisplay(data.expiryDate));
       } else {
         const fallback = targetDate || new Date().toISOString().split("T")[0];
-        setManualExpiryInput(fallback);
+        setManualExpiryInput(formatDateToDisplay(fallback));
       }
       setRegisterStep(3);
     } catch (err) {
       console.error("OCR Expiry Error:", err);
-      setManualExpiryInput(new Date().toISOString().split("T")[0]);
+      setManualExpiryInput(formatDateToDisplay(new Date().toISOString().split("T")[0]));
       setRegisterStep(3);
     } finally {
       setOcrStatus("");
@@ -551,9 +662,10 @@ export default function App() {
     if (isRegisteringRef.current) return;
     isRegisteringRef.current = true;
 
-    const finalDate = manualExpiryInput || extractedExpiryDate;
+    const rawDate = manualExpiryInput || extractedExpiryDate;
+    const finalDate = parseAndNormalizeDate(rawDate);
     if (!finalDate) {
-      const msg = locale === "ar" ? "⚠️ يرجى اختيار تاريخ الصلاحية للمنتج!" : "⚠️ Please select the expiry date!";
+      const msg = t.errorSelectExpiryDate;
       setRegistrationError(msg);
       isRegisteringRef.current = false;
       return;
@@ -582,16 +694,16 @@ export default function App() {
 
     // Duplicate Check: Same Name, Same Brand, Same Expiry Date & Active
     const isNameMatch = (p1: any, p2: any) => {
-      const n1 = p1.name.trim().toLowerCase();
-      const n2 = p2.name.trim().toLowerCase();
-      const b1 = (p1.brand || "").trim().toLowerCase();
-      const b2 = (p2.brand || "").trim().toLowerCase();
+      const n1 = normalizeName(p1.name);
+      const n2 = normalizeName(p2.name);
+      const b1 = normalizeName(p1.brand || "");
+      const b2 = normalizeName(p2.brand || "");
       
       if (b1 !== b2) return false;
       if (n1 === n2) return true;
       
-      const p1Names = (p1.multilingualNames || []).map((m: any) => m.name.trim().toLowerCase());
-      const p2Names = (p2.multilingualNames || []).map((m: any) => m.name.trim().toLowerCase());
+      const p1Names = (p1.multilingualNames || []).map((m: any) => normalizeName(m.name));
+      const p2Names = (p2.multilingualNames || []).map((m: any) => normalizeName(m.name));
       
       return p1Names.some((name: string) => p2Names.includes(name)) || p1Names.includes(n2) || p2Names.includes(n1);
     };
@@ -604,14 +716,10 @@ export default function App() {
     );
 
     if (match) {
-      const formattedDate = finalDate.split("-").reverse().join(".");
-      const errMsg = locale === "ar"
-        ? `هذا المنتج (${proposedProduct.name}) موجود بالفعل بنفس تاريخ الصلاحية (${formattedDate}) ولا يمكن تكراره!`
-        : `This product (${proposedProduct.name}) already exists with the exact same expiry date (${formattedDate}) and cannot be duplicated!`;
-      
-      setRegistrationError(errMsg);
+      setDuplicateFound(match);
+      setPendingProduct(proposedProduct);
       isRegisteringRef.current = false;
-      return; // Block adding
+      return; // Open duplicate comparison overlay
     }
 
     // Save directly
@@ -702,7 +810,17 @@ export default function App() {
   };
 
   const resolveDuplicateWithSeparate = () => {
-    if (!pendingProduct) return;
+    if (!pendingProduct || !duplicateFound) return;
+
+    // Check if they are exactly identical in name, brand and date (prevent duplicates)
+    if (
+      normalizeName(duplicateFound.name) === normalizeName(pendingProduct.name) &&
+      normalizeName(duplicateFound.brand || "") === normalizeName(pendingProduct.brand || "")
+    ) {
+      alert(t.duplicateSeparateAlert);
+      return;
+    }
+
     // Save as distinct product to allow flavor difference (e.g. Cocoa vs Classic)
     saveNewProduct(pendingProduct);
   };
@@ -1038,6 +1156,7 @@ export default function App() {
     setEditingName(p.name);
     setEditingBrand(p.brand || "");
     setEditingExpiryDate(p.expiryDate);
+    setEditingExpiryDateText(formatDateToDisplay(p.expiryDate));
     setEditingQuantityUnit(unit);
     setEditingUnitsPerCarton(unitsPer);
     setEditingLooseUnits(loose);
@@ -1050,6 +1169,7 @@ export default function App() {
     setEditingName("");
     setEditingBrand("");
     setEditingExpiryDate("");
+    setEditingExpiryDateText("");
     setEditingQuantity(1);
     setEditingQuantityUnit("pcs");
     setEditingUnitsPerCarton(12);
@@ -1134,13 +1254,13 @@ export default function App() {
 
   // Format product quantity text based on pieces or cartons
   const formatQuantity = (quantity: number, unit?: "pcs" | "cartons", unitsPer?: number, loose?: number) => {
+    const pieceText = locale === "ar" ? "قطعة" : locale === "tr" ? "Adet" : locale === "de" ? "Stk" : "pcs";
     if (unit === "cartons") {
       const uPer = unitsPer || 12;
       const l = loose || 0;
       const cartons = Math.floor((quantity - l) / uPer);
 
       const cartonText = locale === "ar" ? "كرتونة" : locale === "tr" ? "Koli" : locale === "de" ? "Krt" : "Ctn";
-      const pieceText = locale === "ar" ? "قطعة" : locale === "tr" ? "Adet" : locale === "de" ? "Stk" : "pcs";
 
       let res = `${cartons} ${cartonText}`;
       if (l > 0) {
@@ -1148,7 +1268,7 @@ export default function App() {
       }
       return `${res} (${quantity} ${pieceText})`;
     }
-    return `${quantity} ${locale === "ar" ? "قطعة" : "pcs"}`;
+    return `${quantity} ${pieceText}`;
   };
 
   // Helper calculation for days remaining
@@ -1254,6 +1374,17 @@ export default function App() {
   const sortedProducts = [...filteredProducts].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
+
+  // Count duplicates across active shelf products
+  const activeShelfProducts = products.filter((p) => p.status === "active");
+  const duplicateCounts: { [key: string]: number } = {};
+  activeShelfProducts.forEach((p) => {
+    const normName = normalizeName(p.name);
+    const normBrand = normalizeName(p.brand || "");
+    const date = p.expiryDate;
+    const dupKey = `${normName}_${normBrand}_${date}`;
+    duplicateCounts[dupKey] = (duplicateCounts[dupKey] || 0) + 1;
+  });
 
   const groupedProducts: {
     [key: string]: {
@@ -1780,7 +1911,7 @@ export default function App() {
                       1
                     </span>
                     <span className={registerStep === 1 ? "text-slate-900 font-bold" : ""}>
-                      {locale === "ar" ? "الغلاف والاسم" : "Cover & Name"}
+                      {t.stepHeader1}
                     </span>
                     <ChevronRight className="w-3.5 h-3.5 mx-1" />
                     <span
@@ -1790,7 +1921,7 @@ export default function App() {
                       2
                     </span>
                     <span className={registerStep === 2 ? "text-slate-900 font-bold" : ""}>
-                      {locale === "ar" ? "تاريخ الصلاحية" : "Expiry Date"}
+                      {t.stepHeader2}
                     </span>
                     <ChevronRight className="w-3.5 h-3.5 mx-1" />
                     <span
@@ -1800,7 +1931,7 @@ export default function App() {
                       3
                     </span>
                     <span className={registerStep === 3 ? "text-slate-900 font-bold" : ""}>
-                      {locale === "ar" ? "التأكيد والحفظ" : "Review & Save"}
+                      {t.stepHeader3}
                     </span>
                   </div>
 
@@ -1970,6 +2101,18 @@ export default function App() {
                                   className="hidden"
                                 />
                               </label>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setManualExpiryInput("");
+                                  setRegisterStep(3);
+                                }}
+                                className="bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer border border-blue-200"
+                              >
+                                <Edit className="w-4 h-4 text-blue-500" />
+                                {t.btnEnterDateManually}
+                              </button>
                             </div>
                           </div>
                         </div>
@@ -2203,7 +2346,7 @@ export default function App() {
                               <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-2.5 text-[11px] flex items-center justify-between text-blue-900 font-bold">
                                 <span>{t.totalCalculatedLabel}:</span>
                                 <span className="font-black font-mono">
-                                  {(quantityInput * unitsPerCartonInput) + looseUnitsInput} {locale === "ar" ? "قطعة" : "pcs"}
+                                  {(quantityInput * unitsPerCartonInput) + looseUnitsInput} {t.unitPiece}
                                 </span>
                               </div>
                             </div>
@@ -2215,17 +2358,45 @@ export default function App() {
                               {extractedExpiryDate ? t.dateSuccessLabel : t.dateFallbackLabel}
                             </label>
                             <div className="relative">
-                              <span className="absolute inset-y-0 left-3 flex items-center text-slate-400">
-                                <Calendar className="w-4 h-4" />
-                              </span>
                               <input
-                                type="date"
+                                type="text"
                                 value={manualExpiryInput}
                                 onChange={(e) => {
                                   setManualExpiryInput(e.target.value);
                                   setRegistrationError(null);
                                 }}
-                                className="w-full rounded-xl border border-slate-200 pl-10 pr-4 py-2 text-xs focus:border-slate-400 focus:outline-none bg-white font-medium"
+                                placeholder={t.dateManualPlaceholder}
+                                className="w-full rounded-xl border border-slate-200 pl-4 pr-10 py-2 text-xs focus:border-slate-400 focus:outline-none bg-white font-medium text-left"
+                                dir="ltr"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const el = document.getElementById("hidden-reg-date-picker");
+                                  if (el) {
+                                    try {
+                                      (el as any).showPicker();
+                                    } catch (err) {
+                                      el.click();
+                                    }
+                                  }
+                                }}
+                                className="absolute inset-y-0 right-3 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
+                              >
+                                <Calendar className="w-4 h-4" />
+                              </button>
+                              <input
+                                id="hidden-reg-date-picker"
+                                type="date"
+                                style={{ position: 'absolute', opacity: 0, width: 0, height: 0, top: 0, right: 0, pointerEvents: 'none' }}
+                                value={parseAndNormalizeDate(manualExpiryInput)}
+                                onChange={(e) => {
+                                  const selected = e.target.value; // YYYY-MM-DD
+                                  if (selected) {
+                                    setManualExpiryInput(formatDateToDisplay(selected));
+                                  }
+                                  setRegistrationError(null);
+                                }}
                               />
                             </div>
                           </div>
@@ -2871,14 +3042,47 @@ export default function App() {
                           {t.colExpiry}
                         </label>
                         <div className="relative">
-                          <span className="absolute inset-y-0 left-3 flex items-center text-slate-400">
-                            <Calendar className="w-4 h-4" />
-                          </span>
                           <input
+                            type="text"
+                            value={editingExpiryDateText}
+                            onChange={(e) => {
+                              setEditingExpiryDateText(e.target.value);
+                              setEditingExpiryDate(parseAndNormalizeDate(e.target.value));
+                            }}
+                            placeholder={t.dateManualPlaceholder}
+                            className="w-full rounded-xl border border-slate-200 pl-4 pr-10 py-2.5 text-xs font-semibold focus:border-blue-500 focus:outline-none bg-white text-left"
+                            dir="ltr"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const el = document.getElementById("hidden-edit-date-picker");
+                              if (el) {
+                                try {
+                                  (el as any).showPicker();
+                                } catch (err) {
+                                  el.click();
+                                }
+                              }
+                            }}
+                            className="absolute inset-y-0 right-3 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
+                          >
+                            <Calendar className="w-4 h-4" />
+                          </button>
+                          <input
+                            id="hidden-edit-date-picker"
                             type="date"
-                            value={editingExpiryDate}
-                            onChange={(e) => setEditingExpiryDate(e.target.value)}
-                            className="w-full rounded-xl border border-slate-200 pl-10 pr-4 py-2.5 text-xs font-semibold focus:border-blue-500 focus:outline-none bg-white"
+                            style={{ position: 'absolute', opacity: 0, width: 0, height: 0, top: 0, right: 0, pointerEvents: 'none' }}
+                            value={editingExpiryDate} // already YYYY-MM-DD
+                            onChange={(e) => {
+                              const selected = e.target.value; // YYYY-MM-DD
+                              setEditingExpiryDate(selected);
+                              if (selected) {
+                                setEditingExpiryDateText(formatDateToDisplay(selected));
+                              } else {
+                                setEditingExpiryDateText("");
+                              }
+                            }}
                           />
                         </div>
                       </div>
@@ -3026,7 +3230,7 @@ export default function App() {
                             <div className="bg-blue-50/50 border border-blue-100 rounded-lg p-2 text-[10px] flex items-center justify-between text-blue-900 font-bold">
                               <span>{t.totalCalculatedLabel}:</span>
                               <span className="font-black font-mono">
-                                {(editingQuantity * editingUnitsPerCarton) + editingLooseUnits} {locale === "ar" ? "قطعة" : "pcs"}
+                                {(editingQuantity * editingUnitsPerCarton) + editingLooseUnits} {t.unitPiece}
                               </span>
                             </div>
                           </div>
@@ -3301,6 +3505,23 @@ export default function App() {
                               <span className="text-[9px] bg-slate-100 text-slate-500 font-bold px-1.5 py-0.5 rounded border border-slate-200/50">
                                 {group.batches.length} {locale === "ar" ? "دفعة/تاريخ" : group.batches.length === 1 ? "batch" : "batches"}
                               </span>
+                              {(() => {
+                                const normName = normalizeName(group.name);
+                                const normBrand = normalizeName(group.brand || "");
+                                const date = firstBatch.expiryDate;
+                                const dupKey = `${normName}_${normBrand}_${date}`;
+                                const isDuplicate = duplicateCounts[dupKey] > 1;
+                                
+                                if (isDuplicate) {
+                                  return (
+                                    <span className="text-[9px] font-black text-red-650 bg-red-50 border border-red-200 px-2 py-0.5 rounded-md flex items-center gap-1 shrink-0 animate-pulse">
+                                      <AlertTriangle className="w-2.5 h-2.5 text-red-500 shrink-0" />
+                                      {t.duplicateBadge}
+                                    </span>
+                                  );
+                                }
+                                return null;
+                              })()}
                             </div>
                             <h4 className="font-black text-slate-900 text-base leading-tight tracking-tight hover:text-blue-700 transition-colors">
                               {group.name}
@@ -3634,18 +3855,6 @@ export default function App() {
                       <BellRing className="w-4 h-4 shrink-0" />
                       <span>{locale === "ar" ? "إشعارات التنبيه" : "Alerts Settings"}</span>
                     </button>
-
-                    <button
-                      onClick={() => setActiveSettingsTab("about")}
-                      className={`flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap w-full text-right ${
-                        activeSettingsTab === "about"
-                          ? "bg-blue-600 text-white shadow-md shadow-blue-500/10"
-                          : "text-slate-650 hover:bg-slate-100 hover:text-slate-900"
-                      }`}
-                    >
-                      <Info className="w-4 h-4 shrink-0" />
-                      <span>{locale === "ar" ? "معلومات التطبيق" : "About App"}</span>
-                    </button>
                   </div>
                 </div>
 
@@ -3797,48 +4006,6 @@ export default function App() {
                                 <span>{locale === "ar" ? "محاكاة التنبيه" : "Simulate"}</span>
                               </button>
                             </div>
-                          </div>
-                        </div>
-                      </motion.div>
-                    )}
-
-                    {activeSettingsTab === "about" && (
-                      <motion.div
-                        key="about"
-                        initial={{ opacity: 0, x: locale === "ar" ? 10 : -10 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        exit={{ opacity: 0, x: locale === "ar" ? -10 : 10 }}
-                        transition={{ duration: 0.15 }}
-                        className="space-y-6"
-                      >
-                        {/* About Header */}
-                        <div>
-                          <h4 className="text-base font-black text-slate-800 leading-tight">{locale === "ar" ? "معلومات التطبيق وحالته" : "About App & Health Status"}</h4>
-                          <p className="text-[10px] font-bold text-slate-400 mt-1">{locale === "ar" ? "عرض تفاصيل ترخيص التطبيق وحالة الاتصال بالسيرفر" : "Verify server configurations, health status and license rules"}</p>
-                        </div>
-
-                        {/* App Description */}
-                        <div className="p-4 bg-blue-50/60 border border-blue-100 rounded-2xl text-xs leading-relaxed text-slate-650 font-medium space-y-2">
-                          <div className="flex items-center gap-1 text-blue-700 font-bold">
-                            <Sparkles className="w-4 h-4" />
-                            <span>{locale === "ar" ? "تتبع الصلاحية الذكي" : "Smart Expiry Tracker"}</span>
-                          </div>
-                          <p>{t.appDescription}</p>
-                        </div>
-
-                        {/* Database Health Badge */}
-                        <div className="p-4 bg-slate-50 border border-slate-200/60 rounded-2xl space-y-3">
-                          <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">{locale === "ar" ? "حالة الاتصال بالخادم" : "Server Connectivity"}</h5>
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs font-bold text-slate-700">{locale === "ar" ? "قاعدة بيانات Supabase" : "Supabase Instance"}</span>
-                            <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase ${
-                              isHealthCheck.geminiConfigured
-                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                : "bg-red-50 text-red-700 border border-red-200 animate-pulse"
-                            }`}>
-                              <span className={`w-1.5 h-1.5 rounded-full ${isHealthCheck.geminiConfigured ? "bg-emerald-505 bg-emerald-500" : "bg-red-500"}`} />
-                              {isHealthCheck.geminiConfigured ? (locale === "ar" ? "متصل" : "Connected") : (locale === "ar" ? "غير متصل" : "Disconnected")}
-                            </span>
                           </div>
                         </div>
                       </motion.div>

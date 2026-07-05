@@ -81,6 +81,14 @@ export interface Translations {
   itemsPerCartonLabel: string;
   looseItemsLabel: string;
   totalCalculatedLabel: string;
+  btnEnterDateManually: string;
+  dateManualPlaceholder: string;
+  duplicateSeparateAlert: string;
+  duplicateBadge: string;
+  errorSelectExpiryDate: string;
+  stepHeader1: string;
+  stepHeader2: string;
+  stepHeader3: string;
 }
 
 export const localization: Record<string, Translations> = {
@@ -161,7 +169,15 @@ export const localization: Record<string, Translations> = {
     cartonCountLabel: "عدد الكراتين",
     itemsPerCartonLabel: "القطع داخل الكرتونة",
     looseItemsLabel: "القطع الفردية الزائدة (إن وجدت)",
-    totalCalculatedLabel: "إجمالي الكمية بالقطع"
+    totalCalculatedLabel: "إجمالي الكمية بالقطع",
+    btnEnterDateManually: "إدخال التاريخ يدوياً",
+    dateManualPlaceholder: "يوم/شهر/سنة (مثال: 25/09/2025)",
+    duplicateSeparateAlert: "⚠️ هذا المنتج متطابق تماماً في الاسم والماركة والتاريخ مع منتج مضاف بالفعل. لحفظه كمنتج منفصل، يرجى إغلاق هذه النافذة وتغيير الاسم أولاً في الحقل النصي (مثال: توضيح النكهة أو الشكل المختلف) لتجنب التكرار العشوائي!",
+    duplicateBadge: "تنبيه: مكرر",
+    errorSelectExpiryDate: "⚠️ يرجى اختيار تاريخ الصلاحية للمنتج!",
+    stepHeader1: "الغلاف والاسم",
+    stepHeader2: "تاريخ الصلاحية",
+    stepHeader3: "التأكيد والحفظ"
   },
   en: {
     appTitle: "Smart Expiry Tracker",
@@ -240,7 +256,15 @@ export const localization: Record<string, Translations> = {
     cartonCountLabel: "Number of Cartons",
     itemsPerCartonLabel: "Items per Carton",
     looseItemsLabel: "Loose Items (Optional)",
-    totalCalculatedLabel: "Total Calculated Pieces"
+    totalCalculatedLabel: "Total Calculated Pieces",
+    btnEnterDateManually: "Enter Date Manually",
+    dateManualPlaceholder: "DD/MM/YYYY (e.g. 25/09/2025)",
+    duplicateSeparateAlert: "⚠️ This product is exactly identical in name, brand, and date to an existing product. To save it as a separate product, please close this window and edit the name first in the text field (e.g. clarify the different flavor or packaging) to avoid duplicate entries!",
+    duplicateBadge: "Warning: Duplicate",
+    errorSelectExpiryDate: "⚠️ Please select the expiry date!",
+    stepHeader1: "Cover & Name",
+    stepHeader2: "Expiry Date",
+    stepHeader3: "Review & Save"
   },
   de: {
     appTitle: "Smart Expiry Tracker",
@@ -319,7 +343,15 @@ export const localization: Record<string, Translations> = {
     cartonCountLabel: "Kartonanzahl",
     itemsPerCartonLabel: "Stück pro Karton",
     looseItemsLabel: "Einzelstücke (optional)",
-    totalCalculatedLabel: "Berechnete Gesamtstückzahl"
+    totalCalculatedLabel: "Berechnete Gesamtstückzahl",
+    btnEnterDateManually: "Datum manuell eingeben",
+    dateManualPlaceholder: "TT.MM.JJJJ (z.B. 25.09.2025)",
+    duplicateSeparateAlert: "⚠️ Dieses Produkt ist in Name, Marke und Datum exakt identisch mit einem bereits vorhandenen Produkt. Um es als separates Produkt zu speichern, schließen Sie bitte dieses Fenster und bearbeiten Sie zuerst den Namen im Textfeld (z.B. Angabe einer anderen Sorte oder Verpackung), um doppelte Einträge zu vermeiden!",
+    duplicateBadge: "Warnung: Duplikat",
+    errorSelectExpiryDate: "⚠️ Bitte Ablaufdatum auswählen!",
+    stepHeader1: "Bild & Name",
+    stepHeader2: "MHD (Ablaufdatum)",
+    stepHeader3: "Prüfen & Speichern"
   },
   tr: {
     appTitle: "Smart Expiry Tracker",
@@ -398,6 +430,14 @@ export const localization: Record<string, Translations> = {
     cartonCountLabel: "Koli Sayısı",
     itemsPerCartonLabel: "Koli İçi Adet",
     looseItemsLabel: "Tekli Adet (İsteğe Bağlı)",
-    totalCalculatedLabel: "Hesaplanan Toplam Adet"
+    totalCalculatedLabel: "Hesaplanan Toplam Adet",
+    btnEnterDateManually: "Tarihi Manuel Girin",
+    dateManualPlaceholder: "GG/AA/YYYY (Örn: 25/09/2025)",
+    duplicateSeparateAlert: "⚠️ Bu ürün, mevcut bir ürünle ad, marka ve tarih açısından tamamen aynıdır. Farklı bir ürün olarak kaydetmek için lütfen bu pencereyi kapatın ve çift kayıtları önlemek için önce metin alanındaki adı düzenleyin (örneğin farklı bir aroma veya ambalaj belirtin)!",
+    duplicateBadge: "Uyarı: Kopya Ürün",
+    errorSelectExpiryDate: "⚠️ Lütfen son kullanma tarihini seçin!",
+    stepHeader1: "Kapak & İsim",
+    stepHeader2: "Son Kullanma Tarihi",
+    stepHeader3: "İncele & Kaydet"
   }
 };

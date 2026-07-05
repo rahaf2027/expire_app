@@ -38,6 +38,7 @@ export interface Translations {
   filterTomorrow: string;
   filter2Days: string;
   filter1Week: string;
+  filterDuplicates: string;
   colProduct: string;
   colLanguages: string;
   colExpiry: string;
@@ -127,6 +128,7 @@ export const localization: Record<string, Translations> = {
     filterTomorrow: "ينتهي غداً",
     filter2Days: "ينتهي خلال يومين",
     filter1Week: "ينتهي خلال أسبوع",
+    filterDuplicates: "المنتجات المكررة",
     colProduct: "المنتج",
     colLanguages: "الاسم باللغات الأصلية",
     colExpiry: "تاريخ الانتهاء",
@@ -214,6 +216,7 @@ export const localization: Record<string, Translations> = {
     filterTomorrow: "Expires Tomorrow",
     filter2Days: "Expires in 2 Days",
     filter1Week: "Expires in 1 Week",
+    filterDuplicates: "Duplicate Products",
     colProduct: "Product",
     colLanguages: "Original Multilingual Names",
     colExpiry: "Expiry Date",
@@ -301,6 +304,7 @@ export const localization: Record<string, Translations> = {
     filterTomorrow: "Läuft morgen ab",
     filter2Days: "Läuft in 2 Tagen ab",
     filter1Week: "Läuft in 1 Woche ab",
+    filterDuplicates: "Produkt-Duplikate",
     colProduct: "Produkt",
     colLanguages: "Originale mehrsprachige Namen",
     colExpiry: "Ablaufdatum (MHD)",
@@ -388,6 +392,7 @@ export const localization: Record<string, Translations> = {
     filterTomorrow: "Yarın Sona Eriyor",
     filter2Days: "2 Gün İçinde Sona Eriyor",
     filter1Week: "1 Hafta İçinde Sona Eriyor",
+    filterDuplicates: "Mükerrer Ürünler",
     colProduct: "Ürün",
     colLanguages: "Orijinal Çok Dilli İsimler",
     colExpiry: "Son Kullanma Tarihi",

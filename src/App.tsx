@@ -173,6 +173,22 @@ const normalizeName = (name: string): string => {
   if (!name) return "";
   let res = name.trim().toLowerCase();
   
+  // Normalize Turkish & German extended characters to standard ASCII equivalents
+  res = res.replace(/[ıİíìîï]/g, 'i');
+  res = res.replace(/[şŞ]/g, 's');
+  res = res.replace(/[ğĞ]/g, 'g');
+  res = res.replace(/[çÇ]/g, 'c');
+  res = res.replace(/[öÖ]/g, 'o');
+  res = res.replace(/[üÜ]/g, 'u');
+  res = res.replace(/[äÄ]/g, 'a');
+  res = res.replace(/ß/g, 'ss');
+  
+  // Normalize common accented characters
+  res = res.replace(/[áàâãå]/g, 'a');
+  res = res.replace(/[éèêë]/g, 'e');
+  res = res.replace(/[óòôõø]/g, 'o');
+  res = res.replace(/[úùû]/g, 'u');
+
   // Normalize Arabic characters to avoid spelling duplicates
   res = res.replace(/[أإآإ]/g, 'ا');
   res = res.replace(/ة/g, 'ه');
@@ -191,6 +207,35 @@ const normalizeName = (name: string): string => {
   res = res.replace(/\s+/g, ' ');
   
   return res.trim();
+};
+
+const areProductsDuplicate = (
+  p1: { id?: string; name: string; brand?: string; expiryDate: string; multilingualNames?: { language: string; name: string }[] },
+  p2: { id?: string; name: string; brand?: string; expiryDate: string; multilingualNames?: { language: string; name: string }[] }
+): boolean => {
+  if (p1.id && p2.id && p1.id === p2.id) return false;
+  if (p1.expiryDate !== p2.expiryDate) return false;
+
+  const n1 = normalizeName(p1.name);
+  const n2 = normalizeName(p2.name);
+  const b1 = normalizeName(p1.brand || "");
+  const b2 = normalizeName(p2.brand || "");
+
+  let nameMatches = n1 === n2;
+  if (!nameMatches) {
+    const p1Names = (p1.multilingualNames || []).map((m) => normalizeName(m.name));
+    const p2Names = (p2.multilingualNames || []).map((m) => normalizeName(m.name));
+    nameMatches = p1Names.some((name) => p2Names.includes(name)) || p1Names.includes(n2) || p2Names.includes(n1);
+  }
+
+  if (!nameMatches) return false;
+
+  const isBrandEmpty = (b: string) => {
+    return !b || b === normalizeName("علامة غير محددة") || b === "unknown" || b === "unspecified";
+  };
+
+  const brandsMatch = b1 === b2 || isBrandEmpty(b1) || isBrandEmpty(b2);
+  return brandsMatch;
 };
 
 export default function App() {
@@ -692,32 +737,23 @@ export default function App() {
       looseUnits: quantityUnitInput === "cartons" ? loose : 0,
     };
 
-    // Duplicate Check: Same Name, Same Brand, Same Expiry Date & Active
-    const isNameMatch = (p1: any, p2: any) => {
-      const n1 = normalizeName(p1.name);
-      const n2 = normalizeName(p2.name);
-      const b1 = normalizeName(p1.brand || "");
-      const b2 = normalizeName(p2.brand || "");
-      
-      if (b1 !== b2) return false;
-      if (n1 === n2) return true;
-      
-      const p1Names = (p1.multilingualNames || []).map((m: any) => normalizeName(m.name));
-      const p2Names = (p2.multilingualNames || []).map((m: any) => normalizeName(m.name));
-      
-      return p1Names.some((name: string) => p2Names.includes(name)) || p1Names.includes(n2) || p2Names.includes(n1);
-    };
-
     const match = products.find(
       (p) =>
         p.status === "active" &&
-        p.expiryDate === proposedProduct.expiryDate &&
-        isNameMatch(p, proposedProduct)
+        areProductsDuplicate(p, proposedProduct)
     );
 
     if (match) {
       setDuplicateFound(match);
       setPendingProduct(proposedProduct);
+      // Show notification toast immediately
+      setToastMessage(
+        locale === "ar"
+          ? "تنبيه ذكي: هذا المنتج مسجل بالفعل بنفس التاريخ!"
+          : "Smart Alert: This product is already registered with this date!"
+      );
+      setShowNotificationToast(true);
+      setTimeout(() => setShowNotificationToast(false), 5000);
       isRegisteringRef.current = false;
       return; // Open duplicate comparison overlay
     }
@@ -1180,6 +1216,31 @@ export default function App() {
   const saveEditedProduct = () => {
     if (!editingProduct) return;
 
+    // Check for duplicate active products
+    const tempProduct = {
+      id: editingProduct.id,
+      name: editingName,
+      brand: editingBrand,
+      expiryDate: editingExpiryDate,
+      multilingualNames: editingMultilingual,
+    };
+
+    const duplicateMatch = products.find(
+      (p) =>
+        p.id !== tempProduct.id &&
+        p.status === "active" &&
+        areProductsDuplicate(p, tempProduct)
+    );
+
+    if (duplicateMatch) {
+      alert(
+        locale === "ar"
+          ? `⚠️ لا يمكن تعديل المنتج: يوجد منتج نشط آخر تطابق تام بالاسم والماركة وتاريخ الانتهاء (${duplicateMatch.name}).`
+          : `⚠️ Cannot edit product: Another active product with the same name, brand, and expiry date already exists (${duplicateMatch.name}).`
+      );
+      return;
+    }
+
     const qty = Number(editingQuantity) || 1;
     const unitsPer = Number(editingUnitsPerCarton) || 1;
     const loose = Number(editingLooseUnits) || 0;
@@ -1323,8 +1384,22 @@ export default function App() {
     }
   };
 
-  // Statistics
+  // Statistics and active shelf duplicate counting
   const activeProducts = products.filter((p) => p.status === "active");
+
+  const duplicateCounts: { [key: string]: number } = {};
+  activeProducts.forEach((p) => {
+    const normName = normalizeName(p.name);
+    let normBrand = normalizeName(p.brand || "");
+    // Treat unspecified/unknown brand values as empty strings to align them as duplicates
+    if (normBrand === normalizeName("علامة غير محددة") || normBrand === "unknown" || normBrand === "unspecified") {
+      normBrand = "";
+    }
+    const date = p.expiryDate;
+    const dupKey = `${normName}_${normBrand}_${date}`;
+    duplicateCounts[dupKey] = (duplicateCounts[dupKey] || 0) + 1;
+  });
+
   const expiredCount = activeProducts.filter((p) => getDaysRemaining(p.expiryDate) < 0).length;
   const criticalCount = activeProducts.filter((p) => {
     const days = getDaysRemaining(p.expiryDate);
@@ -1357,6 +1432,18 @@ export default function App() {
 
     if (!matchesSearch) return false;
 
+    // Duplicate filter
+    if (selectedFilter === "duplicates") {
+      const normName = normalizeName(p.name);
+      let normBrand = normalizeName(p.brand || "");
+      if (normBrand === normalizeName("علامة غير محددة") || normBrand === "unknown" || normBrand === "unspecified") {
+        normBrand = "";
+      }
+      const date = p.expiryDate;
+      const dupKey = `${normName}_${normBrand}_${date}`;
+      return duplicateCounts[dupKey] > 1;
+    }
+
     // Time filter
     const days = getDaysRemaining(p.expiryDate);
     if (selectedFilter === "today") return days === 0;
@@ -1375,17 +1462,6 @@ export default function App() {
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
 
-  // Count duplicates across active shelf products
-  const activeShelfProducts = products.filter((p) => p.status === "active");
-  const duplicateCounts: { [key: string]: number } = {};
-  activeShelfProducts.forEach((p) => {
-    const normName = normalizeName(p.name);
-    const normBrand = normalizeName(p.brand || "");
-    const date = p.expiryDate;
-    const dupKey = `${normName}_${normBrand}_${date}`;
-    duplicateCounts[dupKey] = (duplicateCounts[dupKey] || 0) + 1;
-  });
-
   const groupedProducts: {
     [key: string]: {
       name: string;
@@ -1398,7 +1474,13 @@ export default function App() {
   } = {};
 
   sortedProducts.forEach((p) => {
-    const key = p.id;
+    // Group by normalized name and brand to aggregate batches
+    const normName = normalizeName(p.name);
+    let normBrand = normalizeName(p.brand || "");
+    if (normBrand === normalizeName("علامة غير محددة") || normBrand === "unknown" || normBrand === "unspecified") {
+      normBrand = "";
+    }
+    const key = `${normName}_${normBrand}`;
     if (!groupedProducts[key]) {
       groupedProducts[key] = {
         name: p.name,
@@ -3336,6 +3418,7 @@ export default function App() {
               { id: "tomorrow", label: t.filterTomorrow },
               { id: "2days", label: t.filter2Days },
               { id: "1week", label: t.filter1Week },
+              { id: "duplicates", label: t.filterDuplicates },
               { id: "archive", label: locale === "ar" ? "الأرشيف (المباعة/المكتملة)" : "Archive (Sold/Handled)" },
               { id: "trash", label: locale === "ar" ? "سلة المحذوفات" : "Recycle Bin" }
             ].map((tab) => (
@@ -3368,14 +3451,18 @@ export default function App() {
                       ? (locale === "ar" ? "أرشيف عمليات الفرع" : "Branch Archived Products")
                       : selectedFilter === "trash"
                         ? (locale === "ar" ? "سلة المحذوفات" : "Recycle Bin")
-                        : (locale === "ar" ? "قائمة المنتجات النشطة بالرفوف" : "Active Shelf Products")}
+                        : selectedFilter === "duplicates"
+                          ? (locale === "ar" ? "المنتجات المكررة بالرفوف" : "Duplicate Active Shelf Products")
+                          : (locale === "ar" ? "قائمة المنتجات النشطة بالرفوف" : "Active Shelf Products")}
                   </h3>
                   <p className="text-[11px] text-slate-400 font-medium mt-0.5">
                     {selectedFilter === "archive"
                       ? (locale === "ar" ? "قائمة المواد المباعة والمعالجة سابقاً" : "List of sold and processed items")
                       : selectedFilter === "trash"
                         ? (locale === "ar" ? "المنتجات المحذوفة مؤقتاً والجاهزة للاستعادة" : "Temporarily deleted items ready to restore")
-                        : (locale === "ar" ? "الأوراق الحالية للفحص والمراجعة" : "Live inventory · Click any card for full details")}
+                        : selectedFilter === "duplicates"
+                          ? (locale === "ar" ? "قائمة بالمنتجات التي يوجد لها نسخ مكررة على الرف" : "Active shelf products that have matching duplicate records")
+                          : (locale === "ar" ? "الأوراق الحالية للفحص والمراجعة" : "Live inventory · Click any card for full details")}
                   </p>
                 </div>
               </div>
@@ -3526,6 +3613,36 @@ export default function App() {
                             <h4 className="font-black text-slate-900 text-base leading-tight tracking-tight hover:text-blue-700 transition-colors">
                               {group.name}
                             </h4>
+
+                            {(() => {
+                              const normName = normalizeName(group.name);
+                              let normBrand = normalizeName(group.brand || "");
+                              if (normBrand === normalizeName("علامة غير محددة") || normBrand === "unknown" || normBrand === "unspecified") {
+                                normBrand = "";
+                              }
+                              // A group has duplicate if any batch in it is duplicate
+                              const hasDupBatch = group.batches.some(b => {
+                                const dupKey = `${normName}_${normBrand}_${b.expiryDate}`;
+                                return duplicateCounts[dupKey] > 1;
+                              });
+
+                              if (hasDupBatch) {
+                                return (
+                                  <div className="mt-2.5 p-3 bg-red-50 border border-red-150 rounded-2xl flex items-start gap-2.5 text-[11px] text-red-800 font-semibold leading-relaxed shadow-xs">
+                                    <AlertTriangle className="w-4 h-4 text-red-500 shrink-0 mt-0.5 animate-bounce" />
+                                    <div className="flex-1">
+                                      <span className="font-black block text-red-950 mb-0.5">
+                                        {locale === "ar" ? "تنبيه: سجل مكرر بالرف" : "Warning: Duplicate Record on Shelf"}
+                                      </span>
+                                      {locale === "ar"
+                                        ? "تنبيه: يوجد نسخة مكررة من هذا المنتج بنفس الاسم والماركة وتاريخ الانتهاء مضافة كسجل منفصل."
+                                        : "Another record of this product exists on the shelf with the exact same name, brand, and expiry date."}
+                                    </div>
+                                  </div>
+                                );
+                              }
+                              return null;
+                            })()}
                             
                             {/* Multilingual names */}
                             {group.multilingualNames.length > 0 && (

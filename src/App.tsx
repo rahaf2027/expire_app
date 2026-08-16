@@ -97,77 +97,97 @@ const compressImage = (base64Str: string, maxDim = 600): Promise<string> => {
 };
 
 /**
+ * Automatically formats manual date keystrokes into DD.MM.YYYY format.
+ * As digits are entered (e.g., "23042026"), dots are inserted automatically ("23.04.2026").
+ */
+const autoMaskDateInput = (input: string, isDeleting: boolean = false): string => {
+  if (isDeleting) return input;
+
+  const digits = input.replace(/\D/g, "").slice(0, 8);
+  if (!digits) return "";
+
+  if (digits.length <= 2) {
+    if (digits.length === 2 && input.length >= 2 && !input.endsWith(".") && !input.endsWith("/")) {
+      return `${digits}.`;
+    }
+    return digits;
+  }
+
+  if (digits.length <= 4) {
+    const day = digits.slice(0, 2);
+    const month = digits.slice(2);
+    if (digits.length === 4 && !input.endsWith(".") && !input.endsWith("/")) {
+      return `${day}.${month}.`;
+    }
+    return `${day}.${month}`;
+  }
+
+  const day = digits.slice(0, 2);
+  const month = digits.slice(2, 4);
+  let year = digits.slice(4);
+
+  // If 6 digits total (e.g. 230426), expand 2-digit year to 4-digit (2026)
+  if (digits.length === 6 && year.length === 2) {
+    const yy = parseInt(year, 10);
+    const fullYear = (yy < 50 ? 2000 + yy : 1900 + yy).toString();
+    return `${day}.${month}.${fullYear}`;
+  }
+
+  return `${day}.${month}.${year}`;
+};
+
+/**
  * Normalizes user manual date input into YYYY-MM-DD format.
- * Supports:
- * - DD/MM/YYYY
- * - DD.MM.YYYY
- * - DD-MM-YYYY
- * - YYYY-MM-DD
- * - YYYY/MM/DD
- * - YYYY.MM.DD
  */
 const parseAndNormalizeDate = (input: string): string => {
   const clean = input.trim();
   if (!clean) return "";
 
-  const parts = clean.split(/[\/\.\-]/);
-  if (parts.length !== 3) {
-    const parsed = Date.parse(clean);
-    if (!isNaN(parsed)) {
-      return new Date(parsed).toISOString().split("T")[0];
+  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) return clean;
+
+  const trimmed = clean.replace(/[\/\.\-]+$/, "");
+  const parts = trimmed.split(/[\/\.\-]/);
+
+  if (parts.length === 3) {
+    let day = parts[0].padStart(2, "0");
+    let month = parts[1].padStart(2, "0");
+    let year = parts[2];
+
+    if (parts[0].length === 4) {
+      year = parts[0];
+      month = parts[1].padStart(2, "0");
+      day = parts[2].padStart(2, "0");
+      return `${year}-${month}-${day}`;
     }
-    return clean;
+
+    if (year.length === 2) {
+      const yy = parseInt(year, 10);
+      year = (yy < 50 ? 2000 + yy : 1900 + yy).toString();
+    }
+
+    if (year.length === 4) {
+      const testDate = `${year}-${month}-${day}`;
+      if (!isNaN(Date.parse(testDate))) {
+        return testDate;
+      }
+    }
   }
 
-  let day = "";
-  let month = "";
-  let year = "";
-
-  const part0 = parts[0];
-  const part2 = parts[2];
-
-  if (part0.length === 4) {
-    year = part0;
-    month = parts[1];
-    day = part2;
-  } else if (part2.length === 4) {
-    year = part2;
-    const p0 = parseInt(parts[0], 10);
-    const p1 = parseInt(parts[1], 10);
-
-    if (p0 > 12 && p1 <= 12) {
-      day = parts[0];
-      month = parts[1];
-    } else if (p1 > 12 && p0 <= 12) {
-      month = parts[0];
-      day = parts[1];
-    } else {
-      day = parts[0];
-      month = parts[1];
-    }
-  } else if (part0.length === 2 && part2.length === 2) {
-    const yy = parseInt(part2, 10);
-    year = (yy < 50 ? 2000 + yy : 1900 + yy).toString();
-    const p0 = parseInt(parts[0], 10);
-    const p1 = parseInt(parts[1], 10);
-    if (p0 > 12 && p1 <= 12) {
-      day = parts[0];
-      month = parts[1];
-    } else {
-      day = parts[0];
-      month = parts[1];
-    }
-  } else {
-    return clean;
-  }
-
-  day = day.padStart(2, '0');
-  month = month.padStart(2, '0');
-
-  const testDate = `${year}-${month}-${day}`;
-  const timestamp = Date.parse(testDate);
-  if (!isNaN(timestamp)) {
-    return testDate;
+  // Fallback to raw digits parsing (e.g. 23042026 or 230426)
+  const digits = clean.replace(/\D/g, "");
+  if (digits.length === 8) {
+    const day = digits.slice(0, 2);
+    const month = digits.slice(2, 4);
+    const year = digits.slice(4, 8);
+    const testDate = `${year}-${month}-${day}`;
+    if (!isNaN(Date.parse(testDate))) return testDate;
+  } else if (digits.length === 6) {
+    const day = digits.slice(0, 2);
+    const month = digits.slice(2, 4);
+    const yy = parseInt(digits.slice(4, 6), 10);
+    const year = (yy < 50 ? 2000 + yy : 1900 + yy).toString();
+    const testDate = `${year}-${month}-${day}`;
+    if (!isNaN(Date.parse(testDate))) return testDate;
   }
 
   return clean;
@@ -177,7 +197,7 @@ const formatDateToDisplay = (dateStr: string): string => {
   if (!dateStr) return "";
   const parts = dateStr.split("-");
   if (parts.length === 3) {
-    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    return `${parts[2]}.${parts[1]}.${parts[0]}`;
   }
   return dateStr;
 };
@@ -372,6 +392,17 @@ export default function App({
 
   // Product Detail Modal
   const [viewingProduct, setViewingProduct] = useState<Product | null>(null);
+
+  // Add New Expiry Date / Batch states
+  const [addingBatchTarget, setAddingBatchTarget] = useState<Product | null>(null);
+  const [newBatchExpiryDate, setNewBatchExpiryDate] = useState("");
+  const [newBatchExpiryDateText, setNewBatchExpiryDateText] = useState("");
+  const [newBatchQuantity, setNewBatchQuantity] = useState<number>(1);
+  const [newBatchQuantityUnit, setNewBatchQuantityUnit] = useState<'pcs' | 'cartons'>("pcs");
+  const [newBatchUnitsPerCarton, setNewBatchUnitsPerCarton] = useState<number>(12);
+  const [newBatchLooseUnits, setNewBatchLooseUnits] = useState<number>(0);
+  const [newBatchExpiryImage, setNewBatchExpiryImage] = useState<string>("");
+  const [addingBatchBusy, setAddingBatchBusy] = useState(false);
 
   // Fullscreen WhatsApp-like image preview
   const [viewingFullImage, setViewingFullImage] = useState<string | null>(null);
@@ -902,6 +933,93 @@ export default function App({
     setDuplicateFound(null);
     setPendingProduct(null);
     setRegistrationError(null);
+  };
+
+  const openAddBatchModal = (target: Product) => {
+    setAddingBatchTarget(target);
+    const today = new Date().toISOString().split("T")[0];
+    setNewBatchExpiryDate(today);
+    setNewBatchExpiryDateText(formatDateToDisplay(today));
+    setNewBatchQuantity(1);
+    setNewBatchQuantityUnit("pcs");
+    setNewBatchUnitsPerCarton(target.unitsPerCarton || 12);
+    setNewBatchLooseUnits(0);
+    setNewBatchExpiryImage("");
+  };
+
+  const handleAddBatchSubmit = async () => {
+    if (!addingBatchTarget || !newBatchExpiryDate || addingBatchBusy) return;
+    setAddingBatchBusy(true);
+
+    try {
+      let totalQuantityPcs = newBatchQuantity;
+      if (newBatchQuantityUnit === "cartons") {
+        totalQuantityPcs = (newBatchQuantity * (newBatchUnitsPerCarton || 12)) + (newBatchLooseUnits || 0);
+      }
+
+      const newProductId = `prod_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      const nowIso = new Date().toISOString();
+
+      const newProductRecord: Product = {
+        id: newProductId,
+        name: addingBatchTarget.name,
+        brand: addingBatchTarget.brand,
+        multilingualNames: addingBatchTarget.multilingualNames || [],
+        expiryDate: newBatchExpiryDate,
+        imageUrl: addingBatchTarget.imageUrl,
+        expiryImageUrl: newBatchExpiryImage || undefined,
+        status: "active",
+        quantity: totalQuantityPcs,
+        quantityUnit: newBatchQuantityUnit,
+        unitsPerCarton: newBatchUnitsPerCarton,
+        looseUnits: newBatchLooseUnits,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        logs: [
+          {
+            action: "created",
+            employeeName: activeEmployee,
+            timestamp: nowIso,
+          },
+        ],
+      };
+
+      const updatedProducts = [newProductRecord, ...products];
+      setProducts(updatedProducts);
+
+      // Sync to PostgreSQL DB
+      await dbSyncBranchData(activeBranch, updatedProducts, logs);
+
+      // Add activity log
+      const newLog: ActivityLog = {
+        id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        branchId: activeBranch,
+        productId: newProductId,
+        productName: addingBatchTarget.name,
+        brand: addingBatchTarget.brand,
+        employeeName: activeEmployee,
+        action: "created",
+        timestamp: nowIso,
+      };
+      const updatedLogs = [newLog, ...logs];
+      setLogs(updatedLogs);
+      await dbSyncBranchData(activeBranch, updatedProducts, updatedLogs);
+
+      setAddingBatchTarget(null);
+      setNewBatchExpiryDate("");
+      setNewBatchExpiryDateText("");
+      setNewBatchQuantity(1);
+      setNewBatchQuantityUnit("pcs");
+      setNewBatchExpiryImage("");
+
+      setToastMessage(locale === "ar" ? "تم إضافة تاريخ الصلاحية الجديد بنجاح! ✨" : "New expiry date batch added successfully!");
+      setShowNotificationToast(true);
+      setTimeout(() => setShowNotificationToast(false), 3000);
+    } catch (err: any) {
+      alert(err?.message || "Failed to add new batch");
+    } finally {
+      setAddingBatchBusy(false);
+    }
   };
 
   // Handle Product Status Clicks (🛒 Sold, 👁️ Checked, ✅ Handled)
@@ -2621,11 +2739,14 @@ export default function App({
                                 type="text"
                                 value={manualExpiryInput}
                                 onChange={(e) => {
-                                  setManualExpiryInput(e.target.value);
+                                  const raw = e.target.value;
+                                  const isDeleting = raw.length < manualExpiryInput.length;
+                                  const masked = autoMaskDateInput(raw, isDeleting);
+                                  setManualExpiryInput(masked);
                                   setRegistrationError(null);
                                 }}
                                 placeholder={t.dateManualPlaceholder}
-                                className="w-full rounded-xl border border-slate-200 pl-4 pr-10 py-2 text-xs focus:border-slate-400 focus:outline-none bg-white font-medium text-left"
+                                className="w-full rounded-xl border border-slate-200 pl-4 pr-10 py-2 text-xs focus:border-slate-400 focus:outline-none bg-white font-medium text-left font-mono"
                                 dir="ltr"
                               />
                               <button
@@ -3309,11 +3430,14 @@ export default function App({
                             type="text"
                             value={editingExpiryDateText}
                             onChange={(e) => {
-                              setEditingExpiryDateText(e.target.value);
-                              setEditingExpiryDate(parseAndNormalizeDate(e.target.value));
+                              const raw = e.target.value;
+                              const isDeleting = raw.length < editingExpiryDateText.length;
+                              const masked = autoMaskDateInput(raw, isDeleting);
+                              setEditingExpiryDateText(masked);
+                              setEditingExpiryDate(parseAndNormalizeDate(masked));
                             }}
                             placeholder={t.dateManualPlaceholder}
-                            className="w-full rounded-xl border border-slate-200 pl-4 pr-10 py-2.5 text-xs font-semibold focus:border-blue-500 focus:outline-none bg-white text-left"
+                            className="w-full rounded-xl border border-slate-200 pl-4 pr-10 py-2.5 text-xs font-semibold focus:border-blue-500 focus:outline-none bg-white text-left font-mono"
                             dir="ltr"
                           />
                           <button
@@ -3586,6 +3710,214 @@ export default function App({
             )}
           </AnimatePresence>
 
+          {/* ADD NEW EXPIRY DATE / BATCH OVERLAY DIALOG */}
+          <AnimatePresence>
+            {addingBatchTarget && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-xs flex items-center justify-center p-4"
+              >
+                <motion.div
+                  initial={{ scale: 0.95, y: 20 }}
+                  animate={{ scale: 1, y: 0 }}
+                  exit={{ scale: 0.95, y: 20 }}
+                  className="bg-white rounded-3xl max-w-lg w-full shadow-2xl overflow-hidden border border-slate-200"
+                >
+                  <div className="p-5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 bg-white/10 rounded-xl">
+                        <Calendar className="w-5 h-5 text-amber-300" />
+                      </div>
+                      <div>
+                        <h2 className="text-sm font-bold tracking-tight font-display">
+                          {locale === "ar" ? "إضافة تاريخ صلاحية جديد للمنتج" : "Add New Expiry Date Batch"}
+                        </h2>
+                        <p className="text-[11px] text-blue-100 font-semibold truncate max-w-xs">
+                          {addingBatchTarget.brand} - {addingBatchTarget.name}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setAddingBatchTarget(null)}
+                      className="text-white/80 hover:text-white p-1 rounded-lg transition-colors cursor-pointer"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  <div className="p-6 space-y-5 max-h-[70vh] overflow-y-auto" dir={locale === "ar" ? "rtl" : "ltr"}>
+                    {/* Target Product Summary Header */}
+                    <div className="flex items-center gap-3.5 p-3.5 bg-slate-50 border border-slate-200/80 rounded-2xl">
+                      <div className="w-12 h-12 rounded-xl bg-white border border-slate-200 overflow-hidden relative shrink-0">
+                        {addingBatchTarget.imageUrl ? (
+                          <img src={addingBatchTarget.imageUrl} alt={addingBatchTarget.name} className="w-full h-full object-cover" />
+                        ) : (
+                          <Package className="w-6 h-6 text-slate-300 m-auto" />
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest block">{addingBatchTarget.brand}</span>
+                        <h4 className="font-bold text-slate-900 text-sm truncate">{addingBatchTarget.name}</h4>
+                        <p className="text-[10px] text-slate-400 font-medium">
+                          {locale === "ar" ? "سيتم عرض التاريخ الجديد تحت نفس صورة واسم هذا المنتج." : "New date batch will display under the same product photo & title."}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* New Expiry Date Picker & Manual Input */}
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+                        {locale === "ar" ? "تاريخ الصلاحية الجديد *" : "New Expiry Date *"}
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={newBatchExpiryDateText}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            const isDeleting = raw.length < newBatchExpiryDateText.length;
+                            const masked = autoMaskDateInput(raw, isDeleting);
+                            setNewBatchExpiryDateText(masked);
+                            setNewBatchExpiryDate(parseAndNormalizeDate(masked));
+                          }}
+                          placeholder={t.dateManualPlaceholder}
+                          className="w-full rounded-xl border border-slate-200 pl-4 pr-10 py-2.5 text-xs font-semibold focus:border-blue-500 focus:outline-none bg-white text-left font-mono"
+                          dir="ltr"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const el = document.getElementById("hidden-new-batch-date-picker");
+                            if (el) {
+                              try { (el as any).showPicker(); } catch (err) { el.click(); }
+                            }
+                          }}
+                          className="absolute inset-y-0 right-3 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
+                        >
+                          <Calendar className="w-4 h-4 text-blue-600" />
+                        </button>
+                        <input
+                          id="hidden-new-batch-date-picker"
+                          type="date"
+                          style={{ position: 'absolute', opacity: 0, width: 0, height: 0, top: 0, right: 0, pointerEvents: 'none' }}
+                          value={newBatchExpiryDate}
+                          onChange={(e) => {
+                            const selected = e.target.value;
+                            setNewBatchExpiryDate(selected);
+                            if (selected) setNewBatchExpiryDateText(formatDateToDisplay(selected));
+                            else setNewBatchExpiryDateText("");
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Quantity & Unit */}
+                    <div className="space-y-3">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                        {locale === "ar" ? "الكمية لهذا التاريخ" : "Quantity for this batch"}
+                      </label>
+
+                      <div className="flex bg-slate-100 p-1 rounded-xl w-full">
+                        <button
+                          type="button"
+                          onClick={() => setNewBatchQuantityUnit("pcs")}
+                          className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${newBatchQuantityUnit === "pcs" ? "bg-white shadow-xs text-blue-600" : "text-slate-500 hover:text-slate-800"}`}
+                        >
+                          {t.unitPiece}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setNewBatchQuantityUnit("cartons")}
+                          className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${newBatchQuantityUnit === "cartons" ? "bg-white shadow-xs text-blue-600" : "text-slate-500 hover:text-slate-800"}`}
+                        >
+                          {t.unitCarton}
+                        </button>
+                      </div>
+
+                      {newBatchQuantityUnit === "pcs" ? (
+                        <div className="flex items-center border border-slate-200 rounded-xl overflow-hidden bg-white">
+                          <button
+                            type="button"
+                            onClick={() => setNewBatchQuantity(Math.max(1, newBatchQuantity - 1))}
+                            className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 transition-colors text-slate-600 font-bold cursor-pointer"
+                          >
+                            -
+                          </button>
+                          <input
+                            type="number"
+                            value={newBatchQuantity}
+                            onChange={(e) => setNewBatchQuantity(e.target.value === "" ? "" as any : Math.max(1, parseInt(e.target.value) || 1))}
+                            className="w-full text-center border-none text-xs font-semibold py-2 focus:outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setNewBatchQuantity(newBatchQuantity + 1)}
+                            className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 transition-colors text-slate-600 font-bold cursor-pointer"
+                          >
+                            +
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="space-y-3 p-3 bg-slate-50 rounded-xl border border-slate-200/80">
+                          <div className="grid grid-cols-3 gap-2">
+                            <div>
+                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-1">{t.cartonCountLabel}</span>
+                              <input
+                                type="number"
+                                value={newBatchQuantity}
+                                onChange={(e) => setNewBatchQuantity(e.target.value === "" ? "" as any : Math.max(1, parseInt(e.target.value) || 1))}
+                                className="w-full text-center border border-slate-200 rounded-xl text-xs font-semibold py-2 bg-white"
+                              />
+                            </div>
+                            <div>
+                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-1">{t.itemsPerCartonLabel}</span>
+                              <input
+                                type="number"
+                                value={newBatchUnitsPerCarton}
+                                onChange={(e) => setNewBatchUnitsPerCarton(e.target.value === "" ? "" as any : Math.max(1, parseInt(e.target.value) || 1))}
+                                className="w-full text-center border border-slate-200 rounded-xl text-xs font-semibold py-2 bg-white"
+                              />
+                            </div>
+                            <div>
+                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-1">{t.looseItemsLabel}</span>
+                              <input
+                                type="number"
+                                value={newBatchLooseUnits}
+                                onChange={(e) => setNewBatchLooseUnits(e.target.value === "" ? "" as any : Math.max(0, parseInt(e.target.value) || 0))}
+                                className="w-full text-center border border-slate-200 rounded-xl text-xs font-semibold py-2 bg-white"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setAddingBatchTarget(null)}
+                      className="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-500 hover:bg-slate-100 transition-colors cursor-pointer"
+                    >
+                      {t.cancel}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={addingBatchBusy || !newBatchExpiryDate}
+                      onClick={handleAddBatchSubmit}
+                      className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white text-xs font-bold px-6 py-2.5 rounded-xl flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
+                    >
+                      {addingBatchBusy ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                      <span>{locale === "ar" ? "تأكيد إضافة التاريخ" : "Confirm New Date"}</span>
+                    </button>
+                  </div>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           {/* Interactive Filtering Tabs */}
           <div className="bg-white rounded-2xl p-2.5 border border-slate-200 flex flex-wrap items-center gap-2 shadow-sm">
             <div className="text-xs font-bold text-slate-400 uppercase tracking-wider px-3 flex items-center gap-1.5">
@@ -3840,9 +4172,25 @@ export default function App({
 
                           {/* List of Batches ("بقلب بعضو" - nested list) */}
                           <div className="border-t border-slate-100 pt-3 space-y-3.5">
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                              {locale === "ar" ? "تواريخ الصلاحية والكميات الحالية:" : "Expiry Dates & Quantities:"}
-                            </p>
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                                {locale === "ar" ? "تواريخ الصلاحية والكميات الحالية:" : "Expiry Dates & Quantities:"}
+                              </p>
+                              {can("product.create") && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openAddBatchModal(firstBatch);
+                                  }}
+                                  className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-[11px] font-bold transition shadow-2xs cursor-pointer active:scale-95 shrink-0"
+                                  title={locale === "ar" ? "إضافة تاريخ صلاحية جديد لنفس هذا المنتج" : "Add a new expiry date for this product"}
+                                >
+                                  <Plus className="w-3.5 h-3.5 text-blue-600" />
+                                  <span>{locale === "ar" ? "إضافة تاريخ جديد" : "Add New Date"}</span>
+                                </button>
+                              )}
+                            </div>
                             
                             <div className="space-y-2">
                               {group.batches.map((b) => {

@@ -52,6 +52,32 @@ export async function createBranch(id: string, name: string): Promise<BranchReco
   return mapBranchRow(data);
 }
 
+export async function updateBranch(id: string, name: string): Promise<BranchRecord> {
+  const { data, error } = await supabase.rpc("update_branch", { p_id: id, p_name: name });
+  if (error) throw new Error(error.message);
+  return mapBranchRow(data);
+}
+
+export async function deleteBranch(id: string, permanent: boolean = false): Promise<void> {
+  const { error } = await supabase.rpc("delete_branch", { p_id: id, p_permanent: permanent });
+  if (error) throw new Error(error.message);
+}
+
+export async function restoreBranch(id: string): Promise<void> {
+  const { error } = await supabase.rpc("restore_branch", { p_id: id });
+  if (error) throw new Error(error.message);
+}
+
+export async function fetchAllBranches(): Promise<BranchRecord[]> {
+  const { data, error } = await supabase.rpc("fetch_all_managed_branches");
+  if (error) {
+    const res = await supabase.from("branches").select("*").order("created_at", { ascending: false });
+    if (res.error) throw new Error(res.error.message);
+    return (res.data || []).map(mapBranchRow);
+  }
+  return (data || []).map(mapBranchRow);
+}
+
 export async function createAppUser(input: {
   email: string;
   password: string;
@@ -81,6 +107,17 @@ export async function setUserActive(userId: string, active: boolean): Promise<vo
 export async function setUserRole(userId: string, role: Role): Promise<void> {
   const { error } = await supabase.rpc("set_user_role", { p_user_id: userId, p_role: role });
   if (error) throw new Error(error.message);
+}
+
+export async function deleteAppUser(userId: string): Promise<void> {
+  const { error } = await supabase.rpc("delete_app_user", { p_user_id: userId });
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteAllManagedUsers(): Promise<number> {
+  const { data, error } = await supabase.rpc("delete_all_managed_users");
+  if (error) throw new Error(error.message);
+  return (data as number) || 0;
 }
 
 /** Users the caller is allowed to see, with their branch assignments. */

@@ -294,15 +294,215 @@ begin
   end loop;
 end $$;
 
+-- ============================================================================
+-- delete_app_user / delete_all_managed_users — account deletion
+-- ============================================================================
+create or replace function public.delete_app_user(p_user_id uuid)
+returns void
+language plpgsql security definer set search_path = public, extensions
+as $$
+declare
+  v_caller_role  user_role := public.my_role();
+  v_target_role  user_role;
+  v_target_owner uuid;
+begin
+  if not public.my_can_manage() then
+    raise exception 'Insufficient privileges';
+  end if;
+
+  if p_user_id = auth.uid() then
+    raise exception 'You cannot delete your own account';
+  end if;
+
+  select role, owner_id into v_target_role, v_target_owner
+  from public.profiles where id = p_user_id;
+
+  if v_target_role is null then
+    raise exception 'User not found';
+  end if;
+
+  if v_caller_role = 'master_chef' then
+    if v_target_owner is distinct from auth.uid() or v_target_role not in ('chef','employee') then
+      raise exception 'That user is not in your organisation';
+    end if;
+  end if;
+
+  delete from public.branch_members where user_id = p_user_id;
+  delete from public.profiles where id = p_user_id;
+  delete from auth.identities where user_id = p_user_id;
+  delete from auth.users where id = p_user_id;
+end $$;
+
+create or replace function public.delete_all_managed_users()
+returns integer
+language plpgsql security definer set search_path = public, extensions
+as $$
+declare
+  v_caller_role   user_role := public.my_role();
+  v_deleted_count integer := 0;
+  r record;
+begin
+  if not public.my_can_manage() then
+    raise exception 'Insufficient privileges';
+  end if;
+
+  for r in (
+    select id, role, owner_id from public.profiles
+    where id != auth.uid()
+      and (
+        v_caller_role = 'master_admin'
+        or (v_caller_role = 'master_chef' and owner_id = auth.uid() and role in ('chef', 'employee'))
+      )
+  ) loop
+    delete from public.branch_members where user_id = r.id;
+    delete from public.profiles where id = r.id;
+    delete from auth.identities where user_id = r.id;
+    delete from auth.users where id = r.id;
+    v_deleted_count := v_deleted_count + 1;
+  end loop;
+
+  return v_deleted_count;
+end $$;
+
+-- ============================================================================
+-- update_branch / delete_branch / restore_branch — branch management
+-- ============================================================================
+create or replace function public.update_branch(p_id text, p_name text)
+returns public.branches
+language plpgsql security definer set search_path = public
+as $$
+declare
+  v_role user_role := public.my_role();
+  v_row  public.branches;
+  v_name text := trim(coalesce(p_name, ''));
+begin
+  if v_role is null then
+    raise exception 'Not authenticated';
+  end if;
+  if not public.my_can_manage() then
+    raise exception 'Only a master chef or master admin can edit branches';
+  end if;
+  if v_name = '' then
+    raise exception 'Branch name cannot be empty';
+  end if;
+
+  if v_role = 'master_chef' then
+    if not exists (select 1 from public.branches where id = p_id and owner_id = auth.uid()) then
+      raise exception 'Branch "%" does not belong to your organisation', p_id;
+    end if;
+  end if;
+
+  update public.branches
+  set name = v_name
+  where id = p_id
+  returning * into v_row;
+
+  if v_row is null then
+    raise exception 'Branch "%" not found', p_id;
+  end if;
+
+  return v_row;
+end $$;
+
+create or replace function public.delete_branch(p_id text, p_permanent boolean default false)
+returns void
+language plpgsql security definer set search_path = public
+as $$
+declare
+  v_role user_role := public.my_role();
+begin
+  if v_role is null then
+    raise exception 'Not authenticated';
+  end if;
+  if not public.my_can_manage() then
+    raise exception 'Only a master chef or master admin can delete branches';
+  end if;
+
+  if v_role = 'master_chef' then
+    if not exists (select 1 from public.branches where id = p_id and owner_id = auth.uid()) then
+      raise exception 'Branch "%" does not belong to your organisation', p_id;
+    end if;
+  end if;
+
+  if p_permanent then
+    delete from public.branch_members where branch_id = p_id;
+    delete from public.products where branch_id = p_id;
+    delete from public.branches where id = p_id;
+  else
+    update public.branches
+    set is_active = false
+    where id = p_id;
+  end if;
+end $$;
+
+create or replace function public.restore_branch(p_id text)
+returns void
+language plpgsql security definer set search_path = public
+as $$
+declare
+  v_role user_role := public.my_role();
+begin
+  if v_role is null then
+    raise exception 'Not authenticated';
+  end if;
+  if not public.my_can_manage() then
+    raise exception 'Only a master chef or master admin can restore branches';
+  end if;
+
+  if v_role = 'master_chef' then
+    if not exists (select 1 from public.branches where id = p_id and owner_id = auth.uid()) then
+      raise exception 'Branch "%" does not belong to your organisation', p_id;
+    end if;
+  end if;
+
+  update public.branches
+  set is_active = true
+  where id = p_id;
+end $$;
+
+create or replace function public.fetch_all_managed_branches()
+returns setof public.branches
+language plpgsql security definer set search_path = public
+as $$
+declare
+  v_role user_role := public.my_role();
+begin
+  if v_role is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  if v_role = 'master_admin' then
+    return query select * from public.branches order by created_at desc;
+  elsif v_role = 'master_chef' then
+    return query select * from public.branches where owner_id = auth.uid() order by created_at desc;
+  else
+    return query select * from public.branches where is_active = true and id in (
+      select bm.branch_id from public.branch_members bm where bm.user_id = auth.uid()
+    ) order by created_at desc;
+  end if;
+end $$;
+
 -- ─── Expose RPCs to signed-in users only ────────────────────────────────────
 revoke all on function public.create_branch(text, text)                                    from public, anon;
 revoke all on function public.create_app_user(text, text, text, user_role, text[])         from public, anon;
 revoke all on function public.set_user_active(uuid, boolean)                               from public, anon;
 revoke all on function public.set_user_role(uuid, user_role)                               from public, anon;
 revoke all on function public.set_user_branches(uuid, text[])                              from public, anon;
+revoke all on function public.delete_app_user(uuid)                                        from public, anon;
+revoke all on function public.delete_all_managed_users()                                  from public, anon;
+revoke all on function public.update_branch(text, text)                                    from public, anon;
+revoke all on function public.delete_branch(text, boolean)                                 from public, anon;
+revoke all on function public.restore_branch(text)                                         from public, anon;
+revoke all on function public.fetch_all_managed_branches()                                 from public, anon;
 
 grant execute on function public.create_branch(text, text)                            to authenticated;
 grant execute on function public.create_app_user(text, text, text, user_role, text[]) to authenticated;
 grant execute on function public.set_user_active(uuid, boolean)                       to authenticated;
 grant execute on function public.set_user_role(uuid, user_role)                       to authenticated;
 grant execute on function public.set_user_branches(uuid, text[])                      to authenticated;
+grant execute on function public.delete_app_user(uuid)                                to authenticated;
+grant execute on function public.delete_all_managed_users()                          to authenticated;
+grant execute on function public.update_branch(text, text)                            to authenticated;
+grant execute on function public.delete_branch(text, boolean)                         to authenticated;
+grant execute on function public.restore_branch(text)                                 to authenticated;
+grant execute on function public.fetch_all_managed_branches()                         to authenticated;

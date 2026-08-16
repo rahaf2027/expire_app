@@ -23,11 +23,15 @@ export type Action =
   | "archive.clear"
   // Administration
   | "branch.create"
-  | "user.manage";
+  | "branch.edit"
+  | "branch.delete"
+  | "branch.restore"
+  | "user.manage"
+  | "user.delete";
 
 const EMPLOYEE: Action[] = ["product.create", "product.edit", "product.mark"];
 
-// A chef runs their branch end to end, but does not provision branches or users.
+// A chef runs their branch end to end, and can provision employees for their branch.
 const CHEF: Action[] = [
   ...EMPLOYEE,
   "product.delete",
@@ -35,9 +39,17 @@ const CHEF: Action[] = [
   "log.clear",
   "trash.clear",
   "archive.clear",
+  "user.manage",
 ];
 
-const MANAGER: Action[] = [...CHEF, "branch.create", "user.manage"];
+const MANAGER: Action[] = [
+  ...CHEF,
+  "branch.create",
+  "branch.edit",
+  "branch.delete",
+  "branch.restore",
+  "user.delete",
+];
 
 const MATRIX: Record<Role, Action[]> = {
   employee: EMPLOYEE,
@@ -55,5 +67,6 @@ export function can(role: Role | null | undefined, action: Action): boolean {
 export function assignableRoles(role: Role | null | undefined): Role[] {
   if (role === "master_admin") return ["master_chef", "chef", "employee"];
   if (role === "master_chef") return ["chef", "employee"];
+  if (role === "chef") return ["employee"];
   return [];
 }

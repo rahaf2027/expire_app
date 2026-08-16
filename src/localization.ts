@@ -173,7 +173,7 @@ export const localization: Record<string, Translations> = {
     looseItemsLabel: "القطع الفردية الزائدة (إن وجدت)",
     totalCalculatedLabel: "إجمالي الكمية بالقطع",
     btnEnterDateManually: "إدخال التاريخ يدوياً",
-    dateManualPlaceholder: "يوم/شهر/سنة (مثال: 25/09/2025)",
+    dateManualPlaceholder: "يوم.شهر.سنة (مثال: 23.04.2026)",
     duplicateSeparateAlert: "⚠️ هذا المنتج متطابق تماماً في الاسم والماركة والتاريخ مع منتج مضاف بالفعل. لحفظه كمنتج منفصل، يرجى إغلاق هذه النافذة وتغيير الاسم أولاً في الحقل النصي (مثال: توضيح النكهة أو الشكل المختلف) لتجنب التكرار العشوائي!",
     duplicateBadge: "تنبيه: مكرر",
     errorSelectExpiryDate: "⚠️ يرجى اختيار تاريخ الصلاحية للمنتج!",

@@ -32,6 +32,74 @@ export default function AppShell() {
     localStorage.setItem(LOCALE_KEY, locale);
   }, [locale]);
 
+  // Helper to change view and push new entry into HTML5 history stack
+  const changeView = (nextView: View, nextBranchId: string | null = branchId, replace = false) => {
+    setView(nextView);
+    setBranchId(nextBranchId);
+
+    if (nextBranchId) {
+      localStorage.setItem(BRANCH_KEY, nextBranchId);
+    } else {
+      localStorage.removeItem(BRANCH_KEY);
+    }
+
+    const stateObj = { view: nextView, branchId: nextBranchId };
+    let path = "/";
+    if (nextView === "dashboard" && nextBranchId) {
+      path = `/dashboard?branch=${encodeURIComponent(nextBranchId)}`;
+    } else if (nextView === "users") {
+      path = "/users";
+    } else if (nextView === "branches") {
+      path = "/branches";
+    }
+
+    if (replace) {
+      window.history.replaceState(stateObj, "", path);
+    } else {
+      window.history.pushState(stateObj, "", path);
+    }
+  };
+
+  // Sync state when user presses Browser Back / Forward buttons (popstate)
+  useEffect(() => {
+    const handlePopState = (e: PopStateEvent) => {
+      if (e.state && e.state.view) {
+        setView(e.state.view);
+        setBranchId(e.state.branchId || null);
+      } else {
+        // Parse from URL params or pathname
+        const urlParams = new URLSearchParams(window.location.search);
+        const bId = urlParams.get("branch");
+        const pathname = window.location.pathname;
+
+        if (pathname.includes("/users")) {
+          setView("users");
+        } else if (bId || pathname.includes("/dashboard")) {
+          setView("dashboard");
+          if (bId) setBranchId(bId);
+        } else {
+          setView("branches");
+          setBranchId(null);
+        }
+      }
+    };
+
+    // Set initial history state if empty
+    const initialPath = window.location.pathname;
+    const initialBranch = new URLSearchParams(window.location.search).get("branch") || localStorage.getItem(BRANCH_KEY);
+    
+    let initialView: View = "branches";
+    if (initialPath.includes("/users")) {
+      initialView = "users";
+    } else if (initialBranch || initialPath.includes("/dashboard")) {
+      initialView = "dashboard";
+    }
+
+    window.history.replaceState({ view: initialView, branchId: initialBranch }, "", window.location.href);
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
   // A chef or employee tied to exactly one branch should not see a picker with
   // a single card in it — drop them straight into their branch.
   useEffect(() => {
@@ -39,21 +107,15 @@ export default function AppShell() {
 
     const remembered = localStorage.getItem(BRANCH_KEY);
     if (remembered && branches.some((b) => b.id === remembered)) {
-      setBranchId(remembered);
-      setView("dashboard");
+      changeView("dashboard", remembered, true);
       return;
     }
 
     const singleBranchRole = profile.role === "chef" || profile.role === "employee";
     if (singleBranchRole && branches.length === 1) {
-      setBranchId(branches[0].id);
-      setView("dashboard");
+      changeView("dashboard", branches[0].id, true);
     }
   }, [profile, branches, branchId]);
-
-  useEffect(() => {
-    if (branchId) localStorage.setItem(BRANCH_KEY, branchId);
-  }, [branchId]);
 
   const t = getAuthLocale(locale);
 
@@ -100,26 +162,22 @@ export default function AppShell() {
     );
   }
 
-  const [returnToView, setReturnToView] = useState<View>("branches");
+  const activeBranchMemory = branchId || localStorage.getItem(BRANCH_KEY);
 
-  const goToBranches = () => {
-    setBranchId(null);
-    localStorage.removeItem(BRANCH_KEY);
-    setView("branches");
-  };
-
-  const goToUsersFromDashboard = () => {
-    setReturnToView("dashboard");
-    setView("users");
-  };
-
-  const goToUsersFromBranches = () => {
-    setReturnToView("branches");
-    setView("users");
+  const handleGoBack = () => {
+    if (view === "branches" && activeBranchMemory) {
+      changeView("dashboard", activeBranchMemory);
+    } else if (view === "users" && activeBranchMemory) {
+      changeView("dashboard", activeBranchMemory);
+    } else if (window.history.length > 1 && window.history.state && window.history.state.view) {
+      window.history.back();
+    } else {
+      changeView("branches", null);
+    }
   };
 
   if (view === "users") {
-    return <UserManagementPage locale={locale} onBack={() => setView(returnToView)} />;
+    return <UserManagementPage locale={locale} onBack={handleGoBack} />;
   }
 
   if (view === "dashboard" && branchId) {
@@ -129,14 +187,12 @@ export default function AppShell() {
       <App
         branchId={branchId}
         canGoBack={canGoBack}
-        onBack={goToBranches}
+        onBack={handleGoBack}
         locale={locale}
         onLocaleChange={setLocale}
-        onManageUsers={goToUsersFromDashboard}
-        onManageBranches={goToBranches}
-        onSwitchBranch={(id) => {
-          setBranchId(id);
-        }}
+        onManageUsers={() => changeView("users", branchId)}
+        onManageBranches={() => changeView("branches", null)}
+        onSwitchBranch={(id) => changeView("dashboard", id)}
       />
     );
   }
@@ -144,11 +200,12 @@ export default function AppShell() {
   return (
     <BranchListPage
       locale={locale}
-      onPick={(id) => {
-        setBranchId(id);
-        setView("dashboard");
+      onPick={(id) => changeView("dashboard", id)}
+      onManageUsers={() => changeView("users", null)}
+      activeBranchId={activeBranchMemory}
+      onBackToActiveBranch={() => {
+        if (activeBranchMemory) changeView("dashboard", activeBranchMemory);
       }}
-      onManageUsers={goToUsersFromBranches}
     />
   );
 }

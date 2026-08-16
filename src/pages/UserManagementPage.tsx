@@ -3,11 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import { useEffect, useState, type FormEvent } from "react";
-import { ArrowLeft, ArrowRight, UserPlus, Loader2, AlertCircle, CheckCircle2, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, UserPlus, Loader2, AlertCircle, CheckCircle2, Users, Trash2 } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { getAuthLocale } from "../auth/authLocale";
 import { assignableRoles } from "../auth/permissions";
-import { createAppUser, fetchManagedUsers, setUserActive } from "../lib/admin";
+import { createAppUser, fetchManagedUsers, setUserActive, deleteAppUser, deleteAllManagedUsers } from "../lib/admin";
 import type { ManagedUser, Role } from "../auth/types";
 import { roleLabel } from "./BranchListPage";
 
@@ -20,7 +20,7 @@ export default function UserManagementPage({
 }) {
   const t = getAuthLocale(locale);
   const rtl = locale === "ar";
-  const { profile, branches } = useAuth();
+  const { profile, branches, can } = useAuth();
   const roles = assignableRoles(profile?.role);
 
   const [users, setUsers] = useState<ManagedUser[]>([]);
@@ -86,6 +86,36 @@ export default function UserManagementPage({
     setError(null);
     try {
       await setUserActive(u.id, !u.isActive);
+      await reload();
+    } catch (err: any) {
+      setError(err?.message || null);
+    }
+  };
+
+  const handleDeleteUser = async (u: ManagedUser) => {
+    const confirmMsg = locale === "ar"
+      ? `هل أنت متأكد من حذف الحساب "${u.fullName || u.email}" بشكل نهائي؟ لا يمكن التراجع عن هذا الإجراء.`
+      : `Are you sure you want to permanently delete account "${u.fullName || u.email}"? This action cannot be undone.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setError(null);
+    try {
+      await deleteAppUser(u.id);
+      await reload();
+    } catch (err: any) {
+      setError(err?.message || null);
+    }
+  };
+
+  const handleDeleteAllUsers = async () => {
+    const confirmMsg = locale === "ar"
+      ? `⚠️ تحذير مهم: هل أنت متأكد من حذف جميع الحسابات التابعة بشكل نهائي؟ لا يمكن التراجع عن هذا الإجراء.`
+      : `⚠️ WARNING: Are you sure you want to PERMANENTLY delete ALL managed accounts? This cannot be undone.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setError(null);
+    try {
+      await deleteAllManagedUsers();
       await reload();
     } catch (err: any) {
       setError(err?.message || null);
@@ -204,10 +234,23 @@ export default function UserManagementPage({
         </form>
 
         <section className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <h2 className="flex items-center gap-2 text-sm font-bold text-slate-900 px-5 py-4 border-b border-slate-100">
-            <Users className="w-4 h-4 text-slate-400" />
-            {t.existingUsers}
-          </h2>
+          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 gap-3">
+            <h2 className="flex items-center gap-2 text-sm font-bold text-slate-900">
+              <Users className="w-4 h-4 text-slate-400" />
+              {t.existingUsers}
+            </h2>
+            {can("user.delete") && users.some((u) => u.id !== profile?.id) && (
+              <button
+                type="button"
+                onClick={handleDeleteAllUsers}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-bold transition shadow-2xs cursor-pointer"
+                title={locale === "ar" ? "حذف جميع الحسابات التابعة" : "Delete all managed accounts"}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{locale === "ar" ? "حذف جميع الحسابات" : "Delete All Accounts"}</span>
+              </button>
+            )}
+          </div>
 
           {loadingUsers ? (
             <div className="p-8 flex justify-center">
@@ -222,6 +265,11 @@ export default function UserManagementPage({
                   <div className="min-w-0 flex-1">
                     <p className="font-semibold text-sm text-slate-900 truncate">
                       {u.fullName || u.email}
+                      {u.id === profile?.id && (
+                        <span className="mr-2 text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">
+                          {locale === "ar" ? "حسابك الحالي" : "You"}
+                        </span>
+                      )}
                     </p>
                     <p className="text-xs text-slate-500 truncate" dir="ltr">
                       {u.email}
@@ -243,13 +291,27 @@ export default function UserManagementPage({
                   </span>
 
                   {u.id !== profile?.id && (
-                    <button
-                      type="button"
-                      onClick={() => void toggleActive(u)}
-                      className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-bold transition shrink-0"
-                    >
-                      {u.isActive ? t.deactivate : t.activate}
-                    </button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => void toggleActive(u)}
+                        className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-bold transition cursor-pointer"
+                      >
+                        {u.isActive ? t.deactivate : t.activate}
+                      </button>
+
+                      {can("user.delete") && (
+                        <button
+                          type="button"
+                          onClick={() => void handleDeleteUser(u)}
+                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 text-[11px] font-bold transition cursor-pointer border border-red-100"
+                          title={locale === "ar" ? "حذف الحساب بشكل نهائي" : "Delete account permanently"}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>{locale === "ar" ? "حذف" : "Delete"}</span>
+                        </button>
+                      )}
+                    </div>
                   )}
                 </li>
               ))}

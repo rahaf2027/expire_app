@@ -36,7 +36,14 @@ import {
   BellRing,
   SlidersHorizontal,
   ArrowLeftRight,
-  LogOut
+  LogOut,
+  Building2,
+  Users,
+  ChevronDown,
+  ShieldCheck,
+  Globe,
+  Settings,
+  Layers
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -252,9 +259,21 @@ interface AppProps {
   onBack: () => void;
   locale: string;
   onLocaleChange: (locale: string) => void;
+  onManageUsers?: () => void;
+  onManageBranches?: () => void;
+  onSwitchBranch?: (branchId: string) => void;
 }
 
-export default function App({ branchId, canGoBack, onBack, locale, onLocaleChange }: AppProps) {
+export default function App({
+  branchId,
+  canGoBack,
+  onBack,
+  locale,
+  onLocaleChange,
+  onManageUsers,
+  onManageBranches,
+  onSwitchBranch
+}: AppProps) {
   const setLocale = onLocaleChange;
   const t = localization[locale] || localization.ar;
 
@@ -272,11 +291,12 @@ export default function App({ branchId, canGoBack, onBack, locale, onLocaleChang
   const [selectedFilter, setSelectedFilter] = useState<string>("all");
   const [notifTime, setNotifTime] = useState("08:00");
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
   const [dailyAlertsEnabled, setDailyAlertsEnabled] = useState(() => {
     const val = localStorage.getItem("expiry_daily_alerts_enabled");
     return val !== "false";
   });
-  const [activeSettingsTab, setActiveSettingsTab] = useState<"profile" | "alerts">("profile");
+  const [activeSettingsTab, setActiveSettingsTab] = useState<"profile" | "alerts" | "language">("profile");
   const [showNotificationToast, setShowNotificationToast] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
   const [notifOpen, setNotifOpen] = useState(false);
@@ -1536,175 +1556,305 @@ export default function App({ branchId, canGoBack, onBack, locale, onLocaleChang
       </AnimatePresence>
 
       {/* Top Navigation Bar / Main Header */}
-      <header className="h-16 bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
-        <div className="max-w-7xl mx-auto h-full px-4 sm:px-6 lg:px-8 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white shrink-0 shadow-sm">
-              <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6" /><path d="m12 13 4 4 4-4" /><path d="M16 17V3" /></svg>
+      <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="h-16 flex items-center justify-between gap-3">
+            
+            {/* Brand Logo & Title */}
+            <div className="flex items-center gap-3 shrink-0">
+              <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-xl flex items-center justify-center text-white shadow-md shadow-blue-500/20 shrink-0">
+                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6" /><path d="m12 13 4 4 4-4" /><path d="M16 17V3" /></svg>
+              </div>
+              <div className="hidden sm:block">
+                <h1 className="text-sm sm:text-base font-black tracking-tight text-slate-800 font-display leading-tight flex items-center gap-2">
+                  <span>{t.appTitle}</span>
+                </h1>
+                <p className="text-[10px] text-slate-500 font-bold leading-none mt-0.5">
+                  <span className="text-blue-600 font-extrabold">
+                    {branches.find(b => b.id === activeBranch)?.name.split(" / ")[0] || activeBranch}
+                  </span>
+                  <span> • {locale === "ar" ? "نظام تتبع صلاحية المنتجات" : "Smart Expiry System"}</span>
+                </p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-sm sm:text-base font-bold tracking-tight text-slate-800 font-display leading-tight">
-                {t.appTitle}
-              </h1>
-              <p className="text-[9px] sm:text-xs text-slate-500 font-medium leading-none mt-0.5 truncate max-w-[140px] sm:max-w-none">
-                <span className="font-semibold text-slate-700">
-                  {branches.find(b => b.id === activeBranch)?.name.split(" / ")[0] || activeBranch}
-                </span>
-                <span className="hidden sm:inline"> • <span className="text-green-600 font-semibold">{t.simulationMode.split(".")[0]}</span></span>
-              </p>
-            </div>
-          </div>
 
-          <div className="flex items-center gap-2 sm:gap-3">
-            {/* Responsive Language Selector */}
-            <div className="hidden md:flex bg-slate-100 p-1 rounded-md text-[10px] font-bold">
-              {[
-                { code: "ar", label: "العربية" },
-                { code: "en", label: "EN" },
-                { code: "de", label: "DE" },
-                { code: "tr", label: "TR" }
-              ].map((lang) => (
+            {/* Middle Section: Branch Quick Switch & Quick Admin Navigation Buttons */}
+            <div className="flex items-center gap-2 flex-1 justify-center max-w-xl">
+              
+              {/* Sleek Branch Selector Dropdown */}
+              <div className="relative">
                 <button
-                  key={lang.code}
-                  onClick={() => setLocale(lang.code)}
-                  className={`px-2.5 py-1 rounded transition-all text-[10px] font-bold ${locale === lang.code
-                    ? "bg-white shadow-xs text-blue-600"
-                    : "text-slate-500 hover:text-slate-900"
-                    }`}
+                  type="button"
+                  onClick={() => setIsBranchMenuOpen((prev) => !prev)}
+                  className="flex items-center gap-2 px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl bg-slate-100 hover:bg-blue-50 border border-slate-250 hover:border-blue-300 text-slate-800 hover:text-blue-700 text-xs font-bold transition-all shadow-2xs group cursor-pointer"
                 >
-                  {lang.label}
+                  <MapPin className="w-4 h-4 text-blue-600 shrink-0 group-hover:scale-110 transition-transform" />
+                  <span className="truncate max-w-[100px] sm:max-w-[140px] font-black">
+                    {branches.find((b) => b.id === activeBranch)?.name.split(" / ")[0] || activeBranch}
+                  </span>
+                  <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 ${isBranchMenuOpen ? "rotate-180 text-blue-600" : ""}`} />
                 </button>
-              ))}
+
+                {/* Branch Selection Dropdown Menu */}
+                <AnimatePresence>
+                  {isBranchMenuOpen && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setIsBranchMenuOpen(false)} />
+                      <motion.div
+                        initial={{ opacity: 0, y: 6, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 6, scale: 0.95 }}
+                        transition={{ duration: 0.15 }}
+                        className={`absolute top-11 z-50 w-64 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden ${
+                          locale === "ar" ? "right-0" : "left-0"
+                        }`}
+                      >
+                        <div className="px-3 py-2.5 bg-slate-900 text-white flex items-center justify-between">
+                          <span className="text-xs font-bold flex items-center gap-1.5">
+                            <MapPin className="w-3.5 h-3.5 text-blue-400" />
+                            {locale === "ar" ? "الأفرع المتاحة" : "Select Branch"}
+                          </span>
+                          <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">
+                            {branches.length}
+                          </span>
+                        </div>
+
+                        <div className="max-h-56 overflow-y-auto p-1.5 space-y-1">
+                          {branches.map((b) => {
+                            const isCurrent = b.id === activeBranch;
+                            return (
+                              <button
+                                key={b.id}
+                                onClick={() => {
+                                  setIsBranchMenuOpen(false);
+                                  if (onSwitchBranch) onSwitchBranch(b.id);
+                                }}
+                                className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-all text-right ${
+                                  isCurrent
+                                    ? "bg-blue-50 text-blue-700 border border-blue-200/60 shadow-2xs"
+                                    : "text-slate-700 hover:bg-slate-100"
+                                }`}
+                              >
+                                <span className="truncate">{b.name}</span>
+                                {isCurrent && <Check className="w-4 h-4 text-blue-600 shrink-0" />}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {(can("branch.create") || branches.length > 1) && (
+                          <div className="p-1.5 border-t border-slate-100 bg-slate-50/70">
+                            <button
+                              onClick={() => {
+                                setIsBranchMenuOpen(false);
+                                if (onManageBranches) onManageBranches();
+                                else onBack();
+                              }}
+                              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all cursor-pointer shadow-xs"
+                            >
+                              <Building2 className="w-3.5 h-3.5 text-blue-400" />
+                              <span>{locale === "ar" ? "إدارة جميع الأفرع" : "Manage Branches"}</span>
+                            </button>
+                          </div>
+                        )}
+                      </motion.div>
+                    </>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              {/* Direct Action Button: Branch Management (إدارة الأفرع) */}
+              {(can("branch.create") || profile?.role === "master_admin" || profile?.role === "master_chef") && (
+                <button
+                  onClick={() => {
+                    if (onManageBranches) onManageBranches();
+                    else onBack();
+                  }}
+                  className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 sm:py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-bold transition-all cursor-pointer shadow-2xs hover:shadow-xs active:scale-95"
+                  title={locale === "ar" ? "الانتقال إلى صفحة إدارة الأفرع" : "Manage Branches"}
+                >
+                  <Building2 className="w-4 h-4 text-blue-600" />
+                  <span>{locale === "ar" ? "إدارة الأفرع" : "Branches"}</span>
+                </button>
+              )}
+
+              {/* Direct Action Button: User Management (إدارة المستخدمين) */}
+              {(can("user.manage") || profile?.role === "master_admin" || profile?.role === "master_chef") && (
+                <button
+                  onClick={() => {
+                    if (onManageUsers) onManageUsers();
+                  }}
+                  className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 sm:py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold transition-all cursor-pointer shadow-2xs hover:shadow-xs active:scale-95"
+                  title={locale === "ar" ? "الانتقال إلى صفحة إدارة طاقم العمل والمستخدمين" : "Manage Users"}
+                >
+                  <Users className="w-4 h-4 text-indigo-600" />
+                  <span>{locale === "ar" ? "إدارة المستخدمين" : "Users"}</span>
+                </button>
+              )}
             </div>
 
-            <div className="flex md:hidden">
-              <select
-                value={locale}
-                onChange={(e) => setLocale(e.target.value)}
-                className="bg-slate-100 border border-slate-200 rounded-lg px-2 py-1 text-[10px] font-bold text-slate-700 outline-none focus:ring-1 focus:ring-blue-500/20 focus:border-blue-500"
-              >
-                <option value="ar">العربية</option>
-                <option value="en">EN</option>
-                <option value="de">DE</option>
-                <option value="tr">TR</option>
-              </select>
-            </div>
-
-            {/* Notifications Bell */}
-            {(() => {
-              const urgentProducts = activeProducts.filter(p => getDaysRemaining(p.expiryDate) <= 3);
-              return (
-                <div className="relative">
+            {/* Right Controls: Language Selector, Notifications, Interactive User Avatar */}
+            <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+              
+              {/* Responsive Language Selector */}
+              <div className="hidden lg:flex bg-slate-100 p-1 rounded-xl text-[10px] font-bold border border-slate-200">
+                {[
+                  { code: "ar", label: "العربية" },
+                  { code: "en", label: "EN" },
+                  { code: "de", label: "DE" },
+                  { code: "tr", label: "TR" }
+                ].map((lang) => (
                   <button
-                    onClick={() => setNotifOpen(v => !v)}
-                    className="relative w-9 h-9 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-all"
-                    title={locale === "ar" ? "الإشعارات" : "Notifications"}
+                    key={lang.code}
+                    onClick={() => setLocale(lang.code)}
+                    className={`px-2 py-1 rounded-lg transition-all text-[10px] font-bold ${
+                      locale === lang.code
+                        ? "bg-white shadow-2xs text-blue-600 font-black"
+                        : "text-slate-500 hover:text-slate-900"
+                    }`}
                   >
-                    <Bell className="w-4 h-4" />
-                    {urgentProducts.length > 0 && (
-                      <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[9px] font-black rounded-full flex items-center justify-center leading-none">
-                        {urgentProducts.length > 9 ? "9+" : urgentProducts.length}
-                      </span>
-                    )}
+                    {lang.label}
                   </button>
+                ))}
+              </div>
 
-                  <AnimatePresence>
-                    {notifOpen && (
-                      <>
-                        {/* Backdrop */}
-                        <div className="fixed inset-0 z-40" onClick={() => setNotifOpen(false)} />
-                        <motion.div
-                          initial={{ opacity: 0, y: -8, scale: 0.95 }}
-                          animate={{ opacity: 1, y: 0, scale: 1 }}
-                          exit={{ opacity: 0, y: -8, scale: 0.95 }}
-                          transition={{ duration: 0.15 }}
-                          className={`fixed top-16 left-4 right-4 z-50 w-auto md:absolute md:top-11 md:w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden ${locale === "ar" ? "md:left-0 md:right-auto" : "md:right-0 md:left-auto"
+              <div className="flex lg:hidden">
+                <select
+                  value={locale}
+                  onChange={(e) => setLocale(e.target.value)}
+                  className="bg-slate-100 border border-slate-200 rounded-xl px-2 py-1.5 text-[10px] font-bold text-slate-700 outline-none"
+                >
+                  <option value="ar">العربية</option>
+                  <option value="en">EN</option>
+                  <option value="de">DE</option>
+                  <option value="tr">TR</option>
+                </select>
+              </div>
+
+              {/* Notifications Bell */}
+              {(() => {
+                const urgentProducts = activeProducts.filter(p => getDaysRemaining(p.expiryDate) <= 3);
+                return (
+                  <div className="relative">
+                    <button
+                      onClick={() => setNotifOpen(v => !v)}
+                      className="relative w-9 h-9 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-all"
+                      title={locale === "ar" ? "الإشعارات" : "Notifications"}
+                    >
+                      <Bell className="w-4 h-4" />
+                      {urgentProducts.length > 0 && (
+                        <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[9px] font-black rounded-full flex items-center justify-center leading-none">
+                          {urgentProducts.length > 9 ? "9+" : urgentProducts.length}
+                        </span>
+                      )}
+                    </button>
+
+                    <AnimatePresence>
+                      {notifOpen && (
+                        <>
+                          {/* Backdrop */}
+                          <div className="fixed inset-0 z-40" onClick={() => setNotifOpen(false)} />
+                          <motion.div
+                            initial={{ opacity: 0, y: -8, scale: 0.95 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: -8, scale: 0.95 }}
+                            transition={{ duration: 0.15 }}
+                            className={`fixed top-16 left-4 right-4 z-50 w-auto md:absolute md:top-11 md:w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden ${
+                              locale === "ar" ? "md:left-0 md:right-auto" : "md:right-0 md:left-auto"
                             }`}
-                        >
-                          {/* Header */}
-                          <div className="px-4 py-3 bg-slate-900 flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <Bell className="w-4 h-4 text-blue-400" />
-                              <span className="text-sm font-bold text-white">
-                                {locale === "ar" ? "الإشعارات" : "Notifications"}
-                              </span>
-                            </div>
-                            {urgentProducts.length > 0 && (
-                              <span className="text-[10px] bg-red-500 text-white font-bold px-2 py-0.5 rounded-full">
-                                {urgentProducts.length} {locale === "ar" ? "تنبيه" : "alerts"}
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Notifications List */}
-                          <div className="max-h-72 overflow-y-auto divide-y divide-slate-100">
-                            {urgentProducts.length === 0 ? (
-                              <div className="py-10 text-center">
-                                <CheckCircle className="w-8 h-8 text-green-500 mx-auto mb-2" />
-                                <p className="text-xs font-semibold text-slate-500">
-                                  {locale === "ar" ? "لا توجد إشعارات عاجلة" : "No urgent notifications"}
-                                </p>
+                          >
+                            {/* Header */}
+                            <div className="px-4 py-3 bg-slate-900 flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <Bell className="w-4 h-4 text-blue-400" />
+                                <span className="text-sm font-bold text-white">
+                                  {locale === "ar" ? "الإشعارات" : "Notifications"}
+                                </span>
                               </div>
-                            ) : (
-                              urgentProducts.map(p => {
-                                const days = getDaysRemaining(p.expiryDate);
-                                const isExpired = days < 0;
-                                const isCritical = days >= 0 && days <= 1;
-                                return (
-                                  <div
-                                    key={p.id}
-                                    onClick={() => {
-                                      setViewingProduct(p);
-                                      setNotifOpen(false);
-                                    }}
-                                    className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition-colors cursor-pointer"
-                                  >
-                                    <div className={`w-2 h-2 rounded-full shrink-0 ${isExpired ? "bg-red-500" : isCritical ? "bg-orange-500" : "bg-yellow-400"}`} />
-                                    <div className="flex-1 min-w-0">
-                                      <p className="text-xs font-bold text-slate-800 truncate text-left">{p.name}</p>
-                                      <p className="text-[10px] text-slate-500 truncate text-left">{p.brand}</p>
-                                    </div>
-                                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-full shrink-0 ${isExpired
-                                      ? "bg-red-100 text-red-700"
-                                      : isCritical
-                                        ? "bg-orange-100 text-orange-700"
-                                        : "bg-yellow-100 text-yellow-700"
+                              {urgentProducts.length > 0 && (
+                                <span className="text-[10px] bg-red-500 text-white font-bold px-2 py-0.5 rounded-full">
+                                  {urgentProducts.length} {locale === "ar" ? "تنبيه" : "alerts"}
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Notifications List */}
+                            <div className="max-h-72 overflow-y-auto divide-y divide-slate-100">
+                              {urgentProducts.length === 0 ? (
+                                <div className="py-10 text-center">
+                                  <CheckCircle className="w-8 h-8 text-green-500 mx-auto mb-2" />
+                                  <p className="text-xs font-semibold text-slate-500">
+                                    {locale === "ar" ? "لا توجد إشعارات عاجلة" : "No urgent notifications"}
+                                  </p>
+                                </div>
+                              ) : (
+                                urgentProducts.map(p => {
+                                  const days = getDaysRemaining(p.expiryDate);
+                                  const isExpired = days < 0;
+                                  const isCritical = days >= 0 && days <= 1;
+                                  return (
+                                    <div
+                                      key={p.id}
+                                      onClick={() => {
+                                        setViewingProduct(p);
+                                        setNotifOpen(false);
+                                      }}
+                                      className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition-colors cursor-pointer"
+                                    >
+                                      <div className={`w-2 h-2 rounded-full shrink-0 ${isExpired ? "bg-red-500" : isCritical ? "bg-orange-500" : "bg-yellow-400"}`} />
+                                      <div className="flex-1 min-w-0">
+                                        <p className="text-xs font-bold text-slate-800 truncate text-left">{p.name}</p>
+                                        <p className="text-[10px] text-slate-500 truncate text-left">{p.brand}</p>
+                                      </div>
+                                      <span className={`text-[10px] font-black px-2 py-0.5 rounded-full shrink-0 ${
+                                        isExpired
+                                          ? "bg-red-100 text-red-700"
+                                          : isCritical
+                                            ? "bg-orange-100 text-orange-700"
+                                            : "bg-yellow-100 text-yellow-700"
                                       }`}>
-                                      {isExpired
-                                        ? (locale === "ar" ? "منتهٍ" : "Expired")
-                                        : days === 0
-                                          ? (locale === "ar" ? "اليوم" : "Today")
-                                          : days === 1
-                                            ? (locale === "ar" ? "غداً" : "Tomorrow")
-                                            : `${days} ${locale === "ar" ? "أيام" : "days"}`}
-                                    </span>
-                                  </div>
-                                );
-                              })
-                            )}
-                          </div>
+                                        {isExpired
+                                          ? (locale === "ar" ? "منتهٍ" : "Expired")
+                                          : days === 0
+                                            ? (locale === "ar" ? "اليوم" : "Today")
+                                            : days === 1
+                                              ? (locale === "ar" ? "غداً" : "Tomorrow")
+                                              : `${days} ${locale === "ar" ? "أيام" : "days"}`}
+                                      </span>
+                                    </div>
+                                  );
+                                })
+                              )}
+                            </div>
 
-                          {/* Footer */}
-                          <div className="px-4 py-2.5 bg-slate-50 border-t border-slate-100 text-[10px] text-slate-400 text-center">
-                            {locale === "ar"
-                              ? `${activeProducts.length} منتج نشط في ${branches.find(b => b.id === activeBranch)?.name.split(" / ")[0] || activeBranch}`
-                              : `${activeProducts.length} active products in ${branches.find(b => b.id === activeBranch)?.name.split(" / ")[0] || activeBranch}`}
-                          </div>
-                        </motion.div>
-                      </>
-                    )}
-                  </AnimatePresence>
+                            {/* Footer */}
+                            <div className="px-4 py-2.5 bg-slate-50 border-t border-slate-100 text-[10px] text-slate-400 text-center">
+                              {locale === "ar"
+                                ? `${activeProducts.length} منتج نشط في ${branches.find(b => b.id === activeBranch)?.name.split(" / ")[0] || activeBranch}`
+                                : `${activeProducts.length} active products in ${branches.find(b => b.id === activeBranch)?.name.split(" / ")[0] || activeBranch}`}
+                            </div>
+                          </motion.div>
+                        </>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                );
+              })()}
+
+              {/* Interactive User Avatar Button (Opens Profile Control Panel) */}
+              <button
+                onClick={() => setIsProfileOpen(true)}
+                className="group relative flex items-center gap-2 p-1 sm:pr-2.5 rounded-full bg-slate-100 hover:bg-blue-50 border border-slate-250 hover:border-blue-300 transition-all cursor-pointer shadow-2xs active:scale-95"
+                title={locale === "ar" ? "فتح الملف الشخصي وإدارة الحساب" : "Account Profile & Settings"}
+              >
+                <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 text-white font-black text-xs flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform uppercase">
+                  {activeEmployee ? activeEmployee.trim().slice(0, 2).toUpperCase() : "JD"}
                 </div>
-              );
-            })()}
-
-            {/* User Avatar Badge */}
-            <div
-              onClick={() => setIsProfileOpen(true)}
-              className="w-9 h-9 rounded-full bg-slate-200 border border-slate-300 shadow-2xs flex items-center justify-center text-slate-700 hover:text-blue-600 hover:border-blue-300 hover:bg-blue-50 transition-all duration-205 font-bold text-xs shrink-0 select-none cursor-pointer"
-              title={activeEmployee}
-            >
-              {activeEmployee ? activeEmployee.trim().slice(0, 2).toUpperCase() : "JD"}
+                <span className="hidden md:inline-block text-xs font-bold text-slate-700 group-hover:text-blue-700 max-w-[90px] truncate">
+                  {activeEmployee.split(" ")[0]}
+                </span>
+                <span className="w-2.5 h-2.5 rounded-full bg-green-500 ring-2 ring-white absolute -top-0.5 -right-0.5 sm:relative sm:top-0 sm:right-0 shrink-0" />
+              </button>
             </div>
           </div>
         </div>
@@ -1716,27 +1866,33 @@ export default function App({ branchId, canGoBack, onBack, locale, onLocaleChang
         {/* Left Column: Configs & Quick Registration (3 Cols on Desktop) */}
         <div className="lg:col-span-4 space-y-6">
 
-          {/* Active branch + signed-in identity (both read-only now) */}
-          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2 font-display mb-3">
-              <MapPin className="w-4 h-4 text-blue-600" />
-              {t.branch} & {t.activeEmployee}
-            </h3>
+          {/* Active branch & signed-in identity panel */}
+          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2 font-display">
+                <MapPin className="w-4 h-4 text-blue-600" />
+                {t.branch} & {t.activeEmployee}
+              </h3>
+              <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">
+                {branches.find((b) => b.id === activeBranch)?.name.split(" / ")[0] || activeBranch}
+              </span>
+            </div>
 
-            <div className="space-y-4">
+            <div className="space-y-3">
               <div>
                 <label className="block text-[11px] font-bold text-slate-500 uppercase mb-1">{t.branchSelect}</label>
                 <div className="flex items-center gap-2">
-                  <div className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold text-slate-800 truncate">
+                  <div className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-black text-slate-800 truncate">
                     {branches.find((b) => b.id === activeBranch)?.name || activeBranch}
                   </div>
                   {canGoBack && (
                     <button
                       onClick={onBack}
-                      className="bg-slate-100 hover:bg-slate-200 text-slate-700 transition-all text-xs font-bold px-3 py-2.5 rounded-xl flex items-center gap-1 shrink-0"
+                      className="bg-slate-100 hover:bg-slate-200 text-slate-700 transition-all text-xs font-bold px-3 py-2.5 rounded-xl flex items-center gap-1 shrink-0 cursor-pointer shadow-2xs"
+                      title={locale === "ar" ? "الانتقال إلى قائمة جميع الأفرع" : "Change branch"}
                     >
                       <ArrowLeftRight className="w-3.5 h-3.5" />
-                      <span>{authT.backToBranches}</span>
+                      <span>{locale === "ar" ? "الأفرع" : "Branches"}</span>
                     </button>
                   )}
                 </div>
@@ -1746,16 +1902,51 @@ export default function App({ branchId, canGoBack, onBack, locale, onLocaleChang
                 <label className="block text-[11px] font-bold text-slate-500 uppercase mb-1">
                   {t.activeEmployee} (Log Traceability)
                 </label>
-                <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
-                  <User className="w-4 h-4 text-blue-600 shrink-0" />
+                <div
+                  onClick={() => setIsProfileOpen(true)}
+                  className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-blue-50/60 hover:border-blue-200 transition-all px-3 py-2.5 cursor-pointer group"
+                >
+                  <div className="w-8 h-8 rounded-full bg-blue-600 text-white font-black text-xs flex items-center justify-center shrink-0 uppercase shadow-2xs group-hover:scale-105 transition-transform">
+                    {activeEmployee ? activeEmployee.trim().slice(0, 2).toUpperCase() : "JD"}
+                  </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs font-bold text-slate-800 truncate">{activeEmployee}</p>
-                    <p className="text-[10px] font-semibold text-blue-600">
+                    <p className="text-xs font-black text-slate-800 group-hover:text-blue-700 truncate">{activeEmployee}</p>
+                    <p className="text-[10px] font-bold text-blue-600">
                       {profile ? roleLabel(profile.role, locale) : ""}
                     </p>
                   </div>
+                  <Settings className="w-4 h-4 text-slate-400 group-hover:text-blue-600 transition-colors shrink-0" />
                 </div>
               </div>
+
+              {/* Quick Admin Actions Ribbon */}
+              {(can("branch.create") || can("user.manage") || profile?.role === "master_admin" || profile?.role === "master_chef") && (
+                <div className="border-t border-slate-100 pt-3 grid grid-cols-2 gap-2">
+                  {(can("branch.create") || profile?.role === "master_admin" || profile?.role === "master_chef") && (
+                    <button
+                      onClick={() => {
+                        if (onManageBranches) onManageBranches();
+                        else onBack();
+                      }}
+                      className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 text-xs font-bold transition-all cursor-pointer shadow-2xs active:scale-95"
+                    >
+                      <Building2 className="w-3.5 h-3.5 text-blue-600" />
+                      <span>{locale === "ar" ? "إدارة الأفرع" : "Branches"}</span>
+                    </button>
+                  )}
+                  {(can("user.manage") || profile?.role === "master_admin" || profile?.role === "master_chef") && (
+                    <button
+                      onClick={() => {
+                        if (onManageUsers) onManageUsers();
+                      }}
+                      className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 text-xs font-bold transition-all cursor-pointer shadow-2xs active:scale-95"
+                    >
+                      <Users className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>{locale === "ar" ? "إدارة المستخدمين" : "Users"}</span>
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
@@ -3910,7 +4101,7 @@ export default function App({ branchId, canGoBack, onBack, locale, onLocaleChang
         )}
       </AnimatePresence>
 
-      {/* Employee Profile & Daily Alerts Modal (Redesigned with Sidebar Tabs) */}
+      {/* Employee Profile & Control Panel Modal */}
       <AnimatePresence>
         {isProfileOpen && (
           <motion.div
@@ -3923,7 +4114,7 @@ export default function App({ branchId, canGoBack, onBack, locale, onLocaleChang
               initial={{ scale: 0.95, y: 20 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.95, y: 20 }}
-              className="bg-white rounded-3xl max-w-2xl w-full min-h-[480px] overflow-hidden shadow-2xl border border-slate-200 flex flex-col md:flex-row relative animate-fade-in"
+              className="bg-white rounded-3xl max-w-2xl w-full min-h-[520px] max-h-[90vh] overflow-hidden shadow-2xl border border-slate-200 flex flex-col md:flex-row relative animate-fade-in"
             >
               {/* Top Accent Line */}
               <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 z-10" />
@@ -3935,9 +4126,9 @@ export default function App({ branchId, canGoBack, onBack, locale, onLocaleChang
                   <div>
                     <h3 className="font-black text-slate-800 text-sm tracking-tight flex items-center gap-2">
                       <SlidersHorizontal className="w-4 h-4 text-blue-600" />
-                      <span>{locale === "ar" ? "الإعدادات العامة" : "Settings"}</span>
+                      <span>{locale === "ar" ? "إعدادات الحساب" : "Account Settings"}</span>
                     </h3>
-                    <p className="text-[9px] text-slate-400 font-bold mt-1 uppercase tracking-widest">{locale === "ar" ? "لوحة التحكم" : "Preferences"}</p>
+                    <p className="text-[9px] text-slate-400 font-bold mt-1 uppercase tracking-widest">{locale === "ar" ? "الملف الشخصي والتحكم" : "Control Panel"}</p>
                   </div>
 
                   {/* Tabs List */}
@@ -3946,32 +4137,45 @@ export default function App({ branchId, canGoBack, onBack, locale, onLocaleChang
                       onClick={() => setActiveSettingsTab("profile")}
                       className={`flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap w-full text-right ${
                         activeSettingsTab === "profile"
-                          ? "bg-blue-600 text-white shadow-md shadow-blue-500/10"
+                          ? "bg-blue-600 text-white shadow-md shadow-blue-500/10 font-black"
                           : "text-slate-650 hover:bg-slate-100 hover:text-slate-900"
                       }`}
                     >
                       <User className="w-4 h-4 shrink-0" />
-                      <span>{locale === "ar" ? "الملف الشخصي" : "My Profile"}</span>
+                      <span>{locale === "ar" ? "الملف والأفرع" : "Profile & Branches"}</span>
                     </button>
 
                     <button
                       onClick={() => setActiveSettingsTab("alerts")}
                       className={`flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap w-full text-right ${
                         activeSettingsTab === "alerts"
-                          ? "bg-blue-600 text-white shadow-md shadow-blue-500/10"
+                          ? "bg-blue-600 text-white shadow-md shadow-blue-500/10 font-black"
                           : "text-slate-650 hover:bg-slate-100 hover:text-slate-900"
                       }`}
                     >
                       <BellRing className="w-4 h-4 shrink-0" />
                       <span>{locale === "ar" ? "إشعارات التنبيه" : "Alerts Settings"}</span>
                     </button>
+
+                    <button
+                      onClick={() => setActiveSettingsTab("language")}
+                      className={`flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap w-full text-right ${
+                        activeSettingsTab === "language"
+                          ? "bg-blue-600 text-white shadow-md shadow-blue-500/10 font-black"
+                          : "text-slate-650 hover:bg-slate-100 hover:text-slate-900"
+                      }`}
+                    >
+                      <Globe className="w-4 h-4 shrink-0" />
+                      <span>{locale === "ar" ? "اللغة والتفضيلات" : "Language & Region"}</span>
+                    </button>
                   </div>
                 </div>
 
                 {/* Sidebar footer badge */}
                 <div className="hidden md:block border-t border-slate-200/60 pt-4 mt-6">
-                  <div className="flex items-center gap-2 text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">
+                  <div className="flex items-center justify-between text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">
                     <span>{locale === "ar" ? "الإصدار 2.4.0" : "v2.4.0"}</span>
+                    <span className="w-2 h-2 rounded-full bg-green-500" />
                   </div>
                 </div>
               </div>
@@ -3979,7 +4183,7 @@ export default function App({ branchId, canGoBack, onBack, locale, onLocaleChang
               {/* Main Content Area */}
               <div className="flex-1 flex flex-col justify-between p-6 md:p-8 pt-8 min-w-0" dir={locale === "ar" ? "rtl" : "ltr"}>
                 {/* Header Row (Close Button only) */}
-                <div className="flex justify-end items-center mb-4 shrink-0">
+                <div className="flex justify-end items-center mb-3 shrink-0">
                   <button
                     onClick={() => setIsProfileOpen(false)}
                     className="p-2 hover:bg-slate-100 active:scale-95 rounded-xl text-slate-400 hover:text-slate-700 transition-all cursor-pointer border border-transparent hover:border-slate-200"
@@ -3998,55 +4202,137 @@ export default function App({ branchId, canGoBack, onBack, locale, onLocaleChang
                         animate={{ opacity: 1, x: 0 }}
                         exit={{ opacity: 0, x: locale === "ar" ? -10 : 10 }}
                         transition={{ duration: 0.15 }}
-                        className="space-y-6"
+                        className="space-y-5"
                       >
-                        {/* Profile Header */}
-                        <div>
-                          <h4 className="text-base font-black text-slate-800 leading-tight">{locale === "ar" ? "الملف الشخصي" : "Profile Details"}</h4>
-                          <p className="text-[10px] font-bold text-slate-400 mt-1">{locale === "ar" ? "إعدادات وتفاصيل الموظف المسؤول عن الفرع النشط حالياً" : "Configure name details for tracking shelf activity audits"}</p>
+                        {/* Profile Card Header */}
+                        <div className="relative overflow-hidden p-4 rounded-2xl bg-gradient-to-br from-slate-900 to-slate-800 text-white shadow-md flex items-center gap-4">
+                          <div className="w-13 h-13 rounded-2xl bg-gradient-to-tr from-blue-500 to-indigo-600 flex items-center justify-center font-black text-white text-lg shadow-inner shrink-0 uppercase border border-white/20">
+                            {activeEmployee ? activeEmployee.trim().slice(0, 2).toUpperCase() : "JD"}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-md bg-blue-500/20 text-blue-300 border border-blue-400/30">
+                                {profile ? roleLabel(profile.role, locale) : "User"}
+                              </span>
+                            </div>
+                            <h4 className="font-black text-white text-base mt-1 truncate">
+                              {activeEmployee || "Employee"}
+                            </h4>
+                            <p className="text-xs text-slate-300 truncate" dir="ltr">
+                              {profile?.email}
+                            </p>
+                          </div>
                         </div>
 
-                        {/* Horizontal Premium Card */}
-                        <div className="relative overflow-hidden p-5 rounded-2xl bg-gradient-to-br from-slate-50 to-slate-100/50 border border-slate-200/60 shadow-xs flex items-center gap-4">
-                          <div className="absolute -right-6 -bottom-6 w-20 h-20 bg-blue-500/5 rounded-full blur-xl pointer-events-none" />
-                          <div className="relative p-0.5 rounded-full bg-gradient-to-tr from-blue-500 to-indigo-600 shadow-md shadow-blue-500/15 shrink-0">
-                            <div className="w-14 h-14 rounded-full bg-white flex items-center justify-center font-black text-slate-800 text-lg border border-slate-100 uppercase">
-                              {activeEmployee ? activeEmployee.trim().slice(0, 2).toUpperCase() : "JD"}
+                        {/* Direct Admin Control Buttons */}
+                        {(can("branch.create") || can("user.manage") || profile?.role === "master_admin" || profile?.role === "master_chef") && (
+                          <div className="space-y-2">
+                            <h5 className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                              {locale === "ar" ? "لوحة الإدارة والتحكم السريع" : "Quick Admin Navigation"}
+                            </h5>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                              {(can("branch.create") || profile?.role === "master_admin" || profile?.role === "master_chef") && (
+                                <button
+                                  onClick={() => {
+                                    setIsProfileOpen(false);
+                                    if (onManageBranches) onManageBranches();
+                                    else onBack();
+                                  }}
+                                  className="flex items-center gap-3 p-3 rounded-2xl bg-blue-50 hover:bg-blue-100 border border-blue-200/80 text-blue-900 transition-all text-right cursor-pointer group shadow-2xs"
+                                >
+                                  <div className="p-2 rounded-xl bg-blue-600 text-white shrink-0 group-hover:scale-105 transition-transform">
+                                    <Building2 className="w-4 h-4" />
+                                  </div>
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-black">{locale === "ar" ? "إدارة الأفرع" : "Branch Management"}</p>
+                                    <p className="text-[10px] text-blue-700/80 font-bold leading-tight mt-0.5">
+                                      {locale === "ar" ? "إضافة وتعديل الأفرع" : "Create & Manage Branches"}
+                                    </p>
+                                  </div>
+                                </button>
+                              )}
+
+                              {(can("user.manage") || profile?.role === "master_admin" || profile?.role === "master_chef") && (
+                                <button
+                                  onClick={() => {
+                                    setIsProfileOpen(false);
+                                    if (onManageUsers) onManageUsers();
+                                  }}
+                                  className="flex items-center gap-3 p-3 rounded-2xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 text-indigo-900 transition-all text-right cursor-pointer group shadow-2xs"
+                                >
+                                  <div className="p-2 rounded-xl bg-indigo-600 text-white shrink-0 group-hover:scale-105 transition-transform">
+                                    <Users className="w-4 h-4" />
+                                  </div>
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-black">{locale === "ar" ? "إدارة المستخدمين" : "User Management"}</p>
+                                    <p className="text-[10px] text-indigo-700/80 font-bold leading-tight mt-0.5">
+                                      {locale === "ar" ? "إضافة الموظفين وتحديد الأدوار" : "Manage Staff & Roles"}
+                                    </p>
+                                  </div>
+                                </button>
+                              )}
                             </div>
                           </div>
-                          <div className="min-w-0">
-                            <h4 className="font-bold text-[10px] text-slate-400 uppercase tracking-widest leading-none">
-                              {locale === "ar" ? "الموظف النشط حالياً" : "Active Employee"}
-                            </h4>
-                            <p className="font-black text-slate-800 text-lg mt-2 truncate">
-                              {activeEmployee || "Employee"}
-                            </p>
-                            <p className="text-[11px] font-bold text-blue-600 mt-0.5">
-                              {profile ? roleLabel(profile.role, locale) : ""}
-                            </p>
-                          </div>
-                        </div>
+                        )}
 
-                        {/* Identity comes from the signed-in account, so it is not
-                            editable here — a free-text name would let anyone
-                            attribute their actions to someone else. */}
-                        <div className="space-y-2">
-                          <label className="block text-xs font-bold text-slate-500">{authT.emailLabel}</label>
-                          <div className={`flex items-center gap-3 w-full rounded-xl border border-slate-200 py-3 bg-slate-50/50 text-slate-700 ${locale === "ar" ? "pr-4 pl-4" : "pl-4 pr-4"}`}>
-                            <User className="w-4 h-4 text-blue-500 shrink-0" />
-                            <span className="text-xs font-bold truncate" dir="ltr">
-                              {profile?.email}
+                        {/* Assigned Branches List */}
+                        <div className="space-y-2 pt-1">
+                          <div className="flex items-center justify-between">
+                            <h5 className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                              {locale === "ar" ? "الأفرع التابعة لحسابك" : "Assigned Branches"}
+                            </h5>
+                            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                              {branches.length} {locale === "ar" ? "أفرع" : "branches"}
                             </span>
                           </div>
+
+                          <div className="max-h-36 overflow-y-auto space-y-1.5 pr-0.5">
+                            {branches.map((b) => {
+                              const isCurrent = b.id === activeBranch;
+                              return (
+                                <div
+                                  key={b.id}
+                                  className={`flex items-center justify-between p-2.5 rounded-xl border text-xs font-bold transition-all ${
+                                    isCurrent
+                                      ? "bg-blue-50/80 border-blue-200 text-blue-900 shadow-2xs"
+                                      : "bg-slate-50 border-slate-200/60 text-slate-700 hover:bg-slate-100"
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2 truncate">
+                                    <MapPin className={`w-3.5 h-3.5 shrink-0 ${isCurrent ? "text-blue-600" : "text-slate-400"}`} />
+                                    <span className="truncate">{b.name}</span>
+                                  </div>
+                                  {isCurrent ? (
+                                    <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-blue-600 text-white shrink-0">
+                                      {locale === "ar" ? "الفرع النشط" : "Active"}
+                                    </span>
+                                  ) : (
+                                    <button
+                                      onClick={() => {
+                                        setIsProfileOpen(false);
+                                        if (onSwitchBranch) onSwitchBranch(b.id);
+                                      }}
+                                      className="text-[10px] font-extrabold px-2.5 py-1 rounded-md bg-white hover:bg-blue-600 hover:text-white border border-slate-250 text-slate-700 transition-colors shrink-0 shadow-2xs cursor-pointer"
+                                    >
+                                      {locale === "ar" ? "دخول الفرع" : "Switch"}
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
 
-                        <button
-                          onClick={() => void signOut()}
-                          className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-slate-100 hover:bg-red-50 hover:text-red-600 text-slate-700 text-xs font-bold transition"
-                        >
-                          <LogOut className="w-4 h-4" />
-                          {authT.signOut}
-                        </button>
+                        {/* Sign Out Button */}
+                        <div className="pt-2 border-t border-slate-100">
+                          <button
+                            onClick={() => void signOut()}
+                            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 border border-red-200/80 text-xs font-bold transition-colors cursor-pointer"
+                          >
+                            <LogOut className="w-4 h-4" />
+                            <span>{authT.signOut}</span>
+                          </button>
+                        </div>
                       </motion.div>
                     )}
 
@@ -4123,6 +4409,55 @@ export default function App({ branchId, canGoBack, onBack, locale, onLocaleChang
                               </button>
                             </div>
                           </div>
+                        </div>
+                      </motion.div>
+                    )}
+
+                    {activeSettingsTab === "language" && (
+                      <motion.div
+                        key="language"
+                        initial={{ opacity: 0, x: locale === "ar" ? 10 : -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: locale === "ar" ? -10 : 10 }}
+                        transition={{ duration: 0.15 }}
+                        className="space-y-6"
+                      >
+                        {/* Language Header */}
+                        <div>
+                          <h4 className="text-base font-black text-slate-800 leading-tight">{locale === "ar" ? "تفضيلات اللغة والواجهة" : "Language & Interface"}</h4>
+                          <p className="text-[10px] font-bold text-slate-400 mt-1">{locale === "ar" ? "اختر لغة العرض المفضلة لواجهة التطبيق واللوائح" : "Select your preferred application language"}</p>
+                        </div>
+
+                        {/* Languages Grid */}
+                        <div className="grid grid-cols-2 gap-3">
+                          {[
+                            { code: "ar", label: "العربية", flag: "🇸🇦", desc: "النظام بالكامل بالعربية" },
+                            { code: "en", label: "English", flag: "🇬🇧", desc: "Full English Interface" },
+                            { code: "de", label: "Deutsch", flag: "🇩🇪", desc: "Deutsche Benutzeroberfläche" },
+                            { code: "tr", label: "Türkçe", flag: "🇹🇷", desc: "Türkçe Arayüz" }
+                          ].map((lang) => {
+                            const isSelected = locale === lang.code;
+                            return (
+                              <button
+                                key={lang.code}
+                                onClick={() => setLocale(lang.code)}
+                                className={`p-4 rounded-2xl border text-right transition-all flex flex-col justify-between cursor-pointer ${
+                                  isSelected
+                                    ? "bg-blue-50 border-blue-500 ring-2 ring-blue-500/20 text-blue-900 shadow-xs"
+                                    : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                                }`}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span className="text-2xl">{lang.flag}</span>
+                                  {isSelected && <Check className="w-4 h-4 text-blue-600" />}
+                                </div>
+                                <div className="mt-3">
+                                  <p className="font-black text-sm">{lang.label}</p>
+                                  <p className="text-[10px] text-slate-400 font-bold mt-0.5">{lang.desc}</p>
+                                </div>
+                              </button>
+                            );
+                          })}
                         </div>
                       </motion.div>
                     )}

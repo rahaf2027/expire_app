@@ -100,14 +100,26 @@ export default function AppShell() {
     );
   }
 
+  const [returnToView, setReturnToView] = useState<View>("branches");
+
   const goToBranches = () => {
     setBranchId(null);
     localStorage.removeItem(BRANCH_KEY);
     setView("branches");
   };
 
+  const goToUsersFromDashboard = () => {
+    setReturnToView("dashboard");
+    setView("users");
+  };
+
+  const goToUsersFromBranches = () => {
+    setReturnToView("branches");
+    setView("users");
+  };
+
   if (view === "users") {
-    return <UserManagementPage locale={locale} onBack={() => setView("branches")} />;
+    return <UserManagementPage locale={locale} onBack={() => setView(returnToView)} />;
   }
 
   if (view === "dashboard" && branchId) {
@@ -120,6 +132,11 @@ export default function AppShell() {
         onBack={goToBranches}
         locale={locale}
         onLocaleChange={setLocale}
+        onManageUsers={goToUsersFromDashboard}
+        onManageBranches={goToBranches}
+        onSwitchBranch={(id) => {
+          setBranchId(id);
+        }}
       />
     );
   }
@@ -131,7 +148,7 @@ export default function AppShell() {
         setBranchId(id);
         setView("dashboard");
       }}
-      onManageUsers={() => setView("users")}
+      onManageUsers={goToUsersFromBranches}
     />
   );
 }

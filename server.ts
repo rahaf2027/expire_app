@@ -46,8 +46,9 @@ const pool = new pg.Pool({
 
 // Function to initialize tables in database
 async function initDB() {
-  const client = await pool.connect();
+  let client;
   try {
+    client = await pool.connect();
     console.log("[Postgres] Initializing database tables...");
     
     // Create products table
@@ -97,9 +98,11 @@ async function initDB() {
     await client.query("NOTIFY pgrst, 'reload schema';");
     console.log("[Postgres] Database initialization complete and schema reload notified.");
   } catch (err) {
-    console.error("[Postgres] Error initializing database:", err);
+    console.error("[Postgres] Error initializing database (server will continue starting up):", err);
   } finally {
-    client.release();
+    if (client) {
+      client.release();
+    }
   }
 }
 

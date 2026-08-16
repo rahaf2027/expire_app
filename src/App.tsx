@@ -34,13 +34,19 @@ import {
   Edit,
   Package,
   BellRing,
-  SlidersHorizontal
+  SlidersHorizontal,
+  ArrowLeftRight,
+  LogOut
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
 import { localization } from "./localization";
 import { sampleProducts, SampleProduct } from "./samples";
-import { Product, ActivityLog, Branch, MultilingualName } from "./types";
+import { Product, ActivityLog, MultilingualName } from "./types";
+import { useAuth } from "./auth/AuthContext";
+import { getAuthLocale } from "./auth/authLocale";
+import type { Action } from "./auth/permissions";
+import { roleLabel } from "./pages/BranchListPage";
 import { fetchBranchData, syncBranchData as dbSyncBranchData, checkDatabaseHealth, deleteProductFromDb, deleteLogFromDb, clearAllLogsFromDb } from "./lib/database";
 import { analyzePackage, analyzeExpiry } from "./lib/gemini";
 
@@ -238,30 +244,25 @@ const areProductsDuplicate = (
   return brandsMatch;
 };
 
-export default function App() {
-  // Localization state
-  const [locale, setLocale] = useState<string>(() => {
-    return localStorage.getItem("expiry_tracker_locale") || "ar";
-  });
+interface AppProps {
+  /** The branch this dashboard is scoped to, chosen in AppShell. */
+  branchId: string;
+  /** False when the user only has one branch and has nowhere to go back to. */
+  canGoBack: boolean;
+  onBack: () => void;
+  locale: string;
+  onLocaleChange: (locale: string) => void;
+}
+
+export default function App({ branchId, canGoBack, onBack, locale, onLocaleChange }: AppProps) {
+  const setLocale = onLocaleChange;
   const t = localization[locale] || localization.ar;
 
-  // Branch and Employee states
-  const [activeBranch, setActiveBranch] = useState<string>(() => {
-    return localStorage.getItem("expiry_tracker_branch") || "main-branch";
-  });
-  const [activeEmployee, setActiveEmployee] = useState<string>(() => {
-    const val = localStorage.getItem("expiry_tracker_employee");
-    if (val && (val.trim().toLowerCase() === "rahaf" || val.trim() === "rahaf" || val.trim() === "احمد")) {
-      localStorage.setItem("expiry_tracker_employee", "rahaf");
-      return "rahaf";
-    }
-    return val || "rahaf";
-  });
-  const [newBranchName, setNewBranchName] = useState("");
-  const [branches, setBranches] = useState<Branch[]>([
-    { id: "main-branch", name: "الفرع الرئيسي / Hauptfiliale" },
-    { id: "south-warehouse", name: "مخزن الجنوب / Südlager" }
-  ]);
+  // Identity and scope now come from the signed-in session, not localStorage.
+  const { profile, branches, can, signOut } = useAuth();
+  const activeBranch = branchId;
+  const activeEmployee = profile?.fullName?.trim() || profile?.email || "Employee";
+  const authT = getAuthLocale(locale);
 
   // Product and logs list
   const [products, setProducts] = useState<Product[]>([]);
@@ -292,6 +293,19 @@ export default function App() {
     onConfirm: () => {},
     isDanger: false,
   });
+
+  /**
+   * Blocks a destructive action for roles that lack the permission and shows a
+   * toast. RLS rejects the same action server-side, so this only keeps the UI
+   * honest — it is not the security boundary.
+   */
+  const guard = (action: Action): boolean => {
+    if (can(action)) return true;
+    setToastMessage(authT.notAllowed);
+    setShowNotificationToast(true);
+    setTimeout(() => setShowNotificationToast(false), 3000);
+    return false;
+  };
 
   // App initialization & synchronization
   const [isLoading, setIsLoading] = useState(true);
@@ -396,21 +410,11 @@ export default function App() {
     checkHealth();
   }, []);
 
-  // Sync to branch on change
+  // Sync to branch on change. AppShell owns which branch is active and
+  // persists the choice, so this only has to load the data.
   useEffect(() => {
     loadBranchData(activeBranch);
-    localStorage.setItem("expiry_tracker_branch", activeBranch);
   }, [activeBranch]);
-
-  // Handle employee storage
-  useEffect(() => {
-    localStorage.setItem("expiry_tracker_employee", activeEmployee);
-  }, [activeEmployee]);
-
-  // Handle locale storage
-  useEffect(() => {
-    localStorage.setItem("expiry_tracker_locale", locale);
-  }, [locale]);
 
   // Handle daily alerts storage
   useEffect(() => {
@@ -968,6 +972,7 @@ export default function App() {
 
   // Quick deletion helper
   const deleteProduct = async (id: string) => {
+    if (!guard("product.delete")) return;
     const targetProduct = products.find((p) => p.id === id);
     if (!targetProduct) return;
 
@@ -1044,6 +1049,7 @@ export default function App() {
 
   // Delete a single activity log
   const deleteLog = async (logId: string) => {
+    if (!guard("log.delete")) return;
     setConfirmModal({
       isOpen: true,
       title: locale === "ar" ? "حذف سجل العمليات" : "Delete Activity Log",
@@ -1072,6 +1078,7 @@ export default function App() {
 
   // Delete all activity logs
   const clearAllLogs = async () => {
+    if (!guard("log.clear")) return;
     setConfirmModal({
       isOpen: true,
       title: locale === "ar" ? "حذف السجلات اليومية" : "Clear All Activity Logs",
@@ -1099,6 +1106,7 @@ export default function App() {
 
   // Permanently clear all products inside the Recycle Bin (Trash)
   const clearAllTrash = async () => {
+    if (!guard("trash.clear")) return;
     const trashProducts = products.filter((p) => p.status === "trash");
     if (trashProducts.length === 0) return;
 
@@ -1141,6 +1149,7 @@ export default function App() {
 
   // Permanently clear all products inside the Archive (Sold/Handled)
   const clearAllArchive = async () => {
+    if (!guard("archive.clear")) return;
     const archiveProducts = products.filter((p) => p.status === "sold" || p.status === "shelf_checked" || p.status === "handled");
     if (archiveProducts.length === 0) return;
 
@@ -1286,15 +1295,8 @@ export default function App() {
     cancelEditing();
   };
 
-  // Switch Branch helper
-  const createBranchHelper = () => {
-    if (!newBranchName.trim()) return;
-    const cleanId = newBranchName.toLowerCase().replace(/\s+/g, "-");
-    const newBr: Branch = { id: cleanId, name: newBranchName };
-    setBranches([...branches, newBr]);
-    setActiveBranch(cleanId);
-    setNewBranchName("");
-  };
+  // Branch creation lives in BranchListPage now — it needs the create_branch
+  // RPC so the branch is actually persisted and owned by someone.
 
   // Alarm simulation toaster
   const simulateMorningAlarm = () => {
@@ -1714,7 +1716,7 @@ export default function App() {
         {/* Left Column: Configs & Quick Registration (3 Cols on Desktop) */}
         <div className="lg:col-span-4 space-y-6">
 
-          {/* Tenant / Branch Selector */}
+          {/* Active branch + signed-in identity (both read-only now) */}
           <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2 font-display mb-3">
               <MapPin className="w-4 h-4 text-blue-600" />
@@ -1724,52 +1726,34 @@ export default function App() {
             <div className="space-y-4">
               <div>
                 <label className="block text-[11px] font-bold text-slate-500 uppercase mb-1">{t.branchSelect}</label>
-                <select
-                  value={activeBranch}
-                  onChange={(e) => setActiveBranch(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold text-slate-800 focus:border-blue-500 focus:bg-white focus:ring-1 focus:ring-blue-500/20 focus:outline-none transition-all"
-                >
-                  {branches.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Create new branch inline */}
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder={t.branchPlaceholder}
-                  value={newBranchName}
-                  onChange={(e) => setNewBranchName(e.target.value)}
-                  className="flex-1 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold focus:border-blue-500 focus:outline-none bg-slate-50 focus:bg-white transition-all"
-                />
-                <button
-                  onClick={createBranchHelper}
-                  className="bg-blue-600 text-white hover:bg-blue-700 transition-all text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 shrink-0 shadow-xs"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>{t.createBranch.split(" ")[0]}</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold text-slate-800 truncate">
+                    {branches.find((b) => b.id === activeBranch)?.name || activeBranch}
+                  </div>
+                  {canGoBack && (
+                    <button
+                      onClick={onBack}
+                      className="bg-slate-100 hover:bg-slate-200 text-slate-700 transition-all text-xs font-bold px-3 py-2.5 rounded-xl flex items-center gap-1 shrink-0"
+                    >
+                      <ArrowLeftRight className="w-3.5 h-3.5" />
+                      <span>{authT.backToBranches}</span>
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="border-t border-slate-100 pt-3">
                 <label className="block text-[11px] font-bold text-slate-500 uppercase mb-1">
                   {t.activeEmployee} (Log Traceability)
                 </label>
-                <div className="relative">
-                  <span className="absolute inset-y-0 left-3 flex items-center text-slate-400">
-                    <User className="w-4 h-4 text-blue-600" />
-                  </span>
-                  <input
-                    type="text"
-                    value={activeEmployee}
-                    onChange={(e) => setActiveEmployee(e.target.value)}
-                    placeholder={t.employeePlaceholder}
-                    className="w-full rounded-xl border border-slate-200 pl-10 pr-4 py-2.5 text-xs font-bold focus:border-blue-500 focus:outline-none bg-slate-50 focus:bg-white transition-all"
-                  />
+                <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                  <User className="w-4 h-4 text-blue-600 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-bold text-slate-800 truncate">{activeEmployee}</p>
+                    <p className="text-[10px] font-semibold text-blue-600">
+                      {profile ? roleLabel(profile.role, locale) : ""}
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1837,7 +1821,7 @@ export default function App() {
                 <FileText className="w-4.5 h-4.5 text-slate-500" />
                 {t.logTitle}
               </h3>
-              {logs.length > 0 && (
+              {logs.length > 0 && can("log.clear") && (
                 <button
                   onClick={clearAllLogs}
                   className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 text-[10px] font-bold border border-red-200 transition-all cursor-pointer"
@@ -1897,13 +1881,15 @@ export default function App() {
                             {log.brand} - {log.productName}
                           </span>
                         </div>
-                        <button
-                          onClick={() => deleteLog(log.id)}
-                          title={locale === "ar" ? "حذف السجل" : "Delete Log"}
-                          className="p-1 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all cursor-pointer shrink-0"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        {can("log.delete") && (
+                          <button
+                            onClick={() => deleteLog(log.id)}
+                            title={locale === "ar" ? "حذف السجل" : "Delete Log"}
+                            className="p-1 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all cursor-pointer shrink-0"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                       
                       <div className="flex items-center justify-between text-[10px] text-slate-400 font-bold border-t border-slate-200/40 pt-1 mt-0.5">
@@ -2748,13 +2734,15 @@ export default function App() {
                         <Edit className="w-3.5 h-3.5" />
                         {locale === "ar" ? "تعديل" : "Edit"}
                       </button>
-                      <button
-                        onClick={() => { setViewingProduct(null); setDeletingProductId(viewingProduct.id); }}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-xl transition-all shadow-lg"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        {locale === "ar" ? "حذف" : "Delete"}
-                      </button>
+                      {can("product.delete") && (
+                        <button
+                          onClick={() => { setViewingProduct(null); setDeletingProductId(viewingProduct.id); }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-xl transition-all shadow-lg"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          {locale === "ar" ? "حذف" : "Delete"}
+                        </button>
+                      )}
                       <button
                         onClick={() => setViewingProduct(null)}
                         className="p-1.5 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors"
@@ -2962,13 +2950,15 @@ export default function App() {
                       {locale === "ar" ? "إغلاق" : "Close"}
                     </button>
                     <div className="flex gap-2">
-                      <button
-                        onClick={() => { setViewingProduct(null); setDeletingProductId(viewingProduct.id); }}
-                        className="flex items-center gap-1.5 px-4 py-2.5 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold rounded-xl border border-red-200 transition-all"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        {locale === "ar" ? "حذف" : "Delete"}
-                      </button>
+                      {can("product.delete") && (
+                        <button
+                          onClick={() => { setViewingProduct(null); setDeletingProductId(viewingProduct.id); }}
+                          className="flex items-center gap-1.5 px-4 py-2.5 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold rounded-xl border border-red-200 transition-all"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          {locale === "ar" ? "حذف" : "Delete"}
+                        </button>
+                      )}
                       <button
                         onClick={() => { setViewingProduct(null); startEditing(viewingProduct); }}
                         className="flex items-center gap-1.5 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm"
@@ -3467,7 +3457,8 @@ export default function App() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                {(selectedFilter === "archive" || selectedFilter === "trash") && (
+                {(selectedFilter === "archive" || selectedFilter === "trash") &&
+                  can(selectedFilter === "archive" ? "archive.clear" : "trash.clear") && (
                   <button
                     onClick={selectedFilter === "archive" ? clearAllArchive : clearAllTrash}
                     className="px-3.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-650 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs border border-red-200/50 active:scale-95 shrink-0"
@@ -3784,14 +3775,16 @@ export default function App() {
                                           <Edit className="w-3.5 h-3.5" />
                                           <span>{locale === "ar" ? "تعديل" : "Edit"}</span>
                                         </button>
-                                        <button
-                                          onClick={() => setDeletingProductId(b.id)}
-                                          title={locale === "ar" ? "حذف" : "Delete"}
-                                          className="flex-1 flex items-center justify-center gap-1 py-1 px-2 rounded-lg bg-red-50 hover:bg-red-100 active:scale-95 text-red-500 text-[9px] font-bold border border-red-200 transition-all cursor-pointer"
-                                        >
-                                          <Trash2 className="w-3 h-3" />
-                                          <span>{locale === "ar" ? "حذف" : "Delete"}</span>
-                                        </button>
+                                        {can("product.delete") && (
+                                          <button
+                                            onClick={() => setDeletingProductId(b.id)}
+                                            title={locale === "ar" ? "حذف" : "Delete"}
+                                            className="flex-1 flex items-center justify-center gap-1 py-1 px-2 rounded-lg bg-red-50 hover:bg-red-100 active:scale-95 text-red-500 text-[9px] font-bold border border-red-200 transition-all cursor-pointer"
+                                          >
+                                            <Trash2 className="w-3 h-3" />
+                                            <span>{locale === "ar" ? "حذف" : "Delete"}</span>
+                                          </button>
+                                        )}
                                       </div>
                                     </div>
                                   </div>
@@ -4028,26 +4021,32 @@ export default function App() {
                             <p className="font-black text-slate-800 text-lg mt-2 truncate">
                               {activeEmployee || "Employee"}
                             </p>
+                            <p className="text-[11px] font-bold text-blue-600 mt-0.5">
+                              {profile ? roleLabel(profile.role, locale) : ""}
+                            </p>
                           </div>
                         </div>
 
-                        {/* Edit Employee Name Input */}
+                        {/* Identity comes from the signed-in account, so it is not
+                            editable here — a free-text name would let anyone
+                            attribute their actions to someone else. */}
                         <div className="space-y-2">
-                          <label className="block text-xs font-bold text-slate-500">{t.activeEmployee}</label>
-                          <div className="relative group">
-                            <span className={`absolute inset-y-0 flex items-center text-slate-400 group-focus-within:text-blue-600 transition-colors ${locale === "ar" ? "right-3.5" : "left-3.5"}`}>
-                              <User className="w-4.5 h-4.5 text-blue-500" />
+                          <label className="block text-xs font-bold text-slate-500">{authT.emailLabel}</label>
+                          <div className={`flex items-center gap-3 w-full rounded-xl border border-slate-200 py-3 bg-slate-50/50 text-slate-700 ${locale === "ar" ? "pr-4 pl-4" : "pl-4 pr-4"}`}>
+                            <User className="w-4 h-4 text-blue-500 shrink-0" />
+                            <span className="text-xs font-bold truncate" dir="ltr">
+                              {profile?.email}
                             </span>
-                            <input
-                              type="text"
-                              value={activeEmployee}
-                              onChange={(e) => setActiveEmployee(e.target.value)}
-                              placeholder={t.employeePlaceholder}
-                              dir="auto"
-                              className={`w-full rounded-xl border border-slate-200 py-3 text-xs font-bold focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 focus:outline-none bg-slate-50/50 focus:bg-white transition-all text-slate-800 ${locale === "ar" ? "pr-11 pl-4" : "pl-11 pr-4"}`}
-                            />
                           </div>
                         </div>
+
+                        <button
+                          onClick={() => void signOut()}
+                          className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-slate-100 hover:bg-red-50 hover:text-red-600 text-slate-700 text-xs font-bold transition"
+                        >
+                          <LogOut className="w-4 h-4" />
+                          {authT.signOut}
+                        </button>
                       </motion.div>
                     )}
 

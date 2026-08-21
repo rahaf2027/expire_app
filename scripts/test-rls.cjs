@@ -288,6 +288,33 @@ async function main() {
        values ('t-cross','t-branch-b','X','B','2026-11-01','active',1,
                now()::text, now()::text) returning id`);
 
+    console.log("\nNew admin RPCs: privilege enforcement\n");
+
+    await expectDenied(client, employee, "employee CANNOT delete a user",
+      "select public.delete_app_user($1)", [branchChef]);
+    await expectDenied(client, branchChef, "chef CANNOT delete a user",
+      "select public.delete_app_user($1)", [employee]);
+    await expectDenied(client, employee, "employee CANNOT wipe all managed users",
+      "select public.delete_all_managed_users()");
+    await expectDenied(client, branchChef, "chef CANNOT wipe all managed users",
+      "select public.delete_all_managed_users()");
+
+    await expectDenied(client, employee, "employee CANNOT delete a branch",
+      "select public.delete_branch('t-branch-a', true)");
+    await expectDenied(client, branchChef, "chef CANNOT delete a branch",
+      "select public.delete_branch('t-branch-a', true)");
+    await expectDenied(client, chefB, "master_chef B CANNOT delete branch A",
+      "select public.delete_branch('t-branch-a', true)");
+
+    await expectDenied(client, employee, "employee CANNOT rename a branch",
+      "select public.update_branch('t-branch-a','Renamed')");
+    await expectDenied(client, chefB, "master_chef B CANNOT rename branch A",
+      "select public.update_branch('t-branch-a','Hijacked')");
+
+    await expectDenied(client, chefB, "master_chef B CANNOT delete org A's user",
+      "select public.delete_app_user($1)", [employee]);
+
+
     console.log("\nDeactivation is fail-closed\n");
 
     await client.query("update public.profiles set is_active = false where id = $1", [employee]);

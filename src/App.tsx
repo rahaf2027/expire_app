@@ -55,7 +55,23 @@ import { getAuthLocale } from "./auth/authLocale";
 import type { Action } from "./auth/permissions";
 import { roleLabel } from "./pages/BranchListPage";
 import { fetchBranchData, syncBranchData as dbSyncBranchData, checkDatabaseHealth, deleteProductFromDb, deleteLogFromDb, clearAllLogsFromDb } from "./lib/database";
-import { analyzePackage, analyzeExpiry } from "./lib/gemini";
+import { analyzePackage, analyzeExpiry, analyzeProductImage } from "./lib/gemini";
+
+export interface BulkUploadItem {
+  id: string;
+  image: string;
+  name: string;
+  brand: string;
+  expiryDate: string;
+  expiryDateText: string;
+  multilingualNames: MultilingualName[];
+  quantity: number;
+  quantityUnit: 'pcs' | 'cartons';
+  unitsPerCarton: number;
+  looseUnits: number;
+  status: 'pending' | 'analyzing' | 'completed' | 'error';
+  errorMessage?: string;
+}
 
 const compressImage = (base64Str: string, maxDim = 600): Promise<string> => {
   return new Promise((resolve) => {
@@ -98,16 +114,48 @@ const compressImage = (base64Str: string, maxDim = 600): Promise<string> => {
 
 /**
  * Automatically formats manual date keystrokes into DD.MM.YYYY format.
- * As digits are entered (e.g., "23042026"), dots are inserted automatically ("23.04.2026").
+ * Allows editing day, month, or year independently without scrambling,
+ * and avoids prematurely converting "20" into "2020" while typing 4-digit years.
  */
 const autoMaskDateInput = (input: string, isDeleting: boolean = false): string => {
+  if (!input) return "";
   if (isDeleting) return input;
 
+  // If input contains separators (. / -), preserve component parts [day, month, year]
+  if (input.includes(".") || input.includes("/") || input.includes("-")) {
+    const parts = input.split(/[\/\.\-]/);
+    if (parts.length >= 1) {
+      let day = parts[0].replace(/\D/g, "").slice(0, 2);
+      let month = parts[1] !== undefined ? parts[1].replace(/\D/g, "").slice(0, 2) : "";
+      let year = parts[2] !== undefined ? parts[2].replace(/\D/g, "").slice(0, 4) : "";
+
+      let result = day;
+      if (parts.length > 1 || day.length === 2) {
+        result += "." + month;
+      }
+      if (parts.length > 2 || (month.length === 2 && parts.length > 1)) {
+        result += "." + year;
+      }
+
+      // Expand 2-digit year ONLY if year is 2 digits and NOT "20" (so user can type 2026, 2027, etc.)
+      if (year.length === 2 && year !== "20") {
+        const yy = parseInt(year, 10);
+        if (!isNaN(yy)) {
+          const fullYear = (yy < 50 ? 2000 + yy : 1900 + yy).toString();
+          result = `${day}.${month}.${fullYear}`;
+        }
+      }
+
+      return result;
+    }
+  }
+
+  // Continuous digit typing (e.g., "25092026")
   const digits = input.replace(/\D/g, "").slice(0, 8);
   if (!digits) return "";
 
   if (digits.length <= 2) {
-    if (digits.length === 2 && input.length >= 2 && !input.endsWith(".") && !input.endsWith("/")) {
+    if (digits.length === 2 && !input.endsWith(".") && !input.endsWith("/")) {
       return `${digits}.`;
     }
     return digits;
@@ -126,11 +174,13 @@ const autoMaskDateInput = (input: string, isDeleting: boolean = false): string =
   const month = digits.slice(2, 4);
   let year = digits.slice(4);
 
-  // If 6 digits total (e.g. 230426), expand 2-digit year to 4-digit (2026)
-  if (digits.length === 6 && year.length === 2) {
+  // Expand 2-digit year ONLY if year is 2 digits and NOT "20" (so user can type 2026, 2027, etc.)
+  if (digits.length === 6 && year.length === 2 && year !== "20") {
     const yy = parseInt(year, 10);
-    const fullYear = (yy < 50 ? 2000 + yy : 1900 + yy).toString();
-    return `${day}.${month}.${fullYear}`;
+    if (!isNaN(yy)) {
+      const fullYear = (yy < 50 ? 2000 + yy : 1900 + yy).toString();
+      return `${day}.${month}.${fullYear}`;
+    }
   }
 
   return `${day}.${month}.${year}`;
@@ -143,51 +193,58 @@ const parseAndNormalizeDate = (input: string): string => {
   const clean = input.trim();
   if (!clean) return "";
 
-  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) return clean;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+    const [y, m, d] = clean.split("-").map(Number);
+    if (y >= 2000 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return clean;
+    }
+  }
 
   const trimmed = clean.replace(/[\/\.\-]+$/, "");
   const parts = trimmed.split(/[\/\.\-]/);
 
   if (parts.length === 3) {
-    let day = parts[0].padStart(2, "0");
-    let month = parts[1].padStart(2, "0");
-    let year = parts[2];
+    let dayStr = parts[0].padStart(2, "0");
+    let monthStr = parts[1].padStart(2, "0");
+    let yearStr = parts[2];
 
     if (parts[0].length === 4) {
-      year = parts[0];
-      month = parts[1].padStart(2, "0");
-      day = parts[2].padStart(2, "0");
-      return `${year}-${month}-${day}`;
+      yearStr = parts[0];
+      monthStr = parts[1].padStart(2, "0");
+      dayStr = parts[2].padStart(2, "0");
+    } else if (yearStr.length === 2) {
+      const yy = parseInt(yearStr, 10);
+      yearStr = (!isNaN(yy) ? (yy < 50 ? 2000 + yy : 1900 + yy) : 2026).toString();
     }
 
-    if (year.length === 2) {
-      const yy = parseInt(year, 10);
-      year = (yy < 50 ? 2000 + yy : 1900 + yy).toString();
-    }
+    const y = parseInt(yearStr, 10);
+    const m = parseInt(monthStr, 10);
+    const d = parseInt(dayStr, 10);
 
-    if (year.length === 4) {
-      const testDate = `${year}-${month}-${day}`;
-      if (!isNaN(Date.parse(testDate))) {
-        return testDate;
-      }
+    if (!isNaN(y) && !isNaN(m) && !isNaN(d) && y >= 2000 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      const formattedM = m.toString().padStart(2, "0");
+      const formattedD = d.toString().padStart(2, "0");
+      return `${y}-${formattedM}-${formattedD}`;
     }
   }
 
   // Fallback to raw digits parsing (e.g. 23042026 or 230426)
   const digits = clean.replace(/\D/g, "");
   if (digits.length === 8) {
-    const day = digits.slice(0, 2);
-    const month = digits.slice(2, 4);
-    const year = digits.slice(4, 8);
-    const testDate = `${year}-${month}-${day}`;
-    if (!isNaN(Date.parse(testDate))) return testDate;
+    const d = parseInt(digits.slice(0, 2), 10);
+    const m = parseInt(digits.slice(2, 4), 10);
+    const y = parseInt(digits.slice(4, 8), 10);
+    if (y >= 2000 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return `${y}-${m.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
+    }
   } else if (digits.length === 6) {
-    const day = digits.slice(0, 2);
-    const month = digits.slice(2, 4);
+    const d = parseInt(digits.slice(0, 2), 10);
+    const m = parseInt(digits.slice(2, 4), 10);
     const yy = parseInt(digits.slice(4, 6), 10);
-    const year = (yy < 50 ? 2000 + yy : 1900 + yy).toString();
-    const testDate = `${year}-${month}-${day}`;
-    if (!isNaN(Date.parse(testDate))) return testDate;
+    const y = yy < 50 ? 2000 + yy : 1900 + yy;
+    if (y >= 2000 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return `${y}-${m.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
+    }
   }
 
   return clean;
@@ -403,6 +460,12 @@ export default function App({
   const [newBatchLooseUnits, setNewBatchLooseUnits] = useState<number>(0);
   const [newBatchExpiryImage, setNewBatchExpiryImage] = useState<string>("");
   const [addingBatchBusy, setAddingBatchBusy] = useState(false);
+
+  // Bulk AI Upload states
+  const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
+  const [bulkItems, setBulkItems] = useState<BulkUploadItem[]>([]);
+  const [isBulkProcessing, setIsBulkProcessing] = useState(false);
+  const bulkFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Fullscreen WhatsApp-like image preview
   const [viewingFullImage, setViewingFullImage] = useState<string | null>(null);
@@ -957,22 +1020,253 @@ export default function App({
         totalQuantityPcs = (newBatchQuantity * (newBatchUnitsPerCarton || 12)) + (newBatchLooseUnits || 0);
       }
 
-      const newProductId = `prod_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
       const nowIso = new Date().toISOString();
 
-      const newProductRecord: Product = {
-        id: newProductId,
-        name: addingBatchTarget.name,
+      // Check if a batch with exact same expiry date already exists for this product
+      const existingBatch = products.find(
+        (p) =>
+          p.status === "active" &&
+          normalizeName(p.name) === normalizeName(addingBatchTarget.name) &&
+          normalizeName(p.brand || "") === normalizeName(addingBatchTarget.brand || "") &&
+          p.expiryDate === newBatchExpiryDate
+      );
+
+      let targetProductId = "";
+      let updatedProducts: Product[];
+      let productToSync: Product;
+
+      if (existingBatch) {
+        targetProductId = existingBatch.id;
+        updatedProducts = products.map((p) => {
+          if (p.id === existingBatch.id) {
+            const updated = {
+              ...p,
+              quantity: p.quantity + totalQuantityPcs,
+              updatedAt: nowIso,
+              logs: [
+                ...(p.logs || []),
+                {
+                  action: `quantity_incremented (+${totalQuantityPcs})`,
+                  employeeName: activeEmployee || "Employee",
+                  timestamp: nowIso,
+                },
+              ],
+            };
+            productToSync = updated;
+            return updated;
+          }
+          return p;
+        });
+      } else {
+        const newProductId = `prod_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        targetProductId = newProductId;
+
+        const newProductRecord: Product = {
+          id: newProductId,
+          name: addingBatchTarget.name,
+          brand: addingBatchTarget.brand,
+          multilingualNames: addingBatchTarget.multilingualNames || [],
+          expiryDate: newBatchExpiryDate,
+          imageUrl: addingBatchTarget.imageUrl,
+          expiryImageUrl: newBatchExpiryImage || undefined,
+          status: "active",
+          quantity: totalQuantityPcs,
+          quantityUnit: newBatchQuantityUnit,
+          unitsPerCarton: newBatchUnitsPerCarton,
+          looseUnits: newBatchLooseUnits,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+          logs: [
+            {
+              action: "created",
+              employeeName: activeEmployee,
+              timestamp: nowIso,
+            },
+          ],
+        };
+
+        productToSync = newProductRecord;
+        updatedProducts = [newProductRecord, ...products];
+      }
+
+      // 1. Update React local state immediately
+      setProducts(updatedProducts);
+
+      // 2. Add activity log
+      const newLog: ActivityLog = {
+        id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        branchId: activeBranch,
+        productId: targetProductId,
+        productName: addingBatchTarget.name,
         brand: addingBatchTarget.brand,
-        multilingualNames: addingBatchTarget.multilingualNames || [],
-        expiryDate: newBatchExpiryDate,
-        imageUrl: addingBatchTarget.imageUrl,
-        expiryImageUrl: newBatchExpiryImage || undefined,
+        employeeName: activeEmployee,
+        action: existingBatch ? "quantity_incremented" : "created",
+        timestamp: nowIso,
+      };
+      const updatedLogs = [newLog, ...logs];
+      setLogs(updatedLogs);
+
+      // 3. Reset form fields & CLOSE MODAL IMMEDIATELY
+      setAddingBatchTarget(null);
+      setNewBatchExpiryDate("");
+      setNewBatchExpiryDateText("");
+      setNewBatchQuantity(1);
+      setNewBatchQuantityUnit("pcs");
+      setNewBatchExpiryImage("");
+
+      setToastMessage(
+        locale === "ar"
+          ? existingBatch
+            ? "تم تحديث كمية التاريخ الموجود بنجاح! ✨"
+            : "تم إضافة تاريخ الصلاحية الجديد بنجاح! ✨"
+          : existingBatch
+            ? "Updated quantity for existing date batch!"
+            : "New expiry date batch added successfully!"
+      );
+      setShowNotificationToast(true);
+      setTimeout(() => setShowNotificationToast(false), 3000);
+
+      // 4. Sync to DB asynchronously (fire-and-forget in background) with ONLY the affected product and new log
+      syncBranchData([productToSync!], [newLog]);
+    } catch (err: any) {
+      alert(err?.message || "Failed to add new batch");
+    } finally {
+      setAddingBatchBusy(false);
+    }
+  };
+
+  // ─── Bulk Upload Handlers ──────────────────────────────────────────────────
+  const handleBulkFilesSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const newItems: BulkUploadItem[] = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const base64Raw = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(file);
+      });
+
+      const compressed = await compressImage(base64Raw, 600);
+      const itemId = `bulk_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 6)}`;
+      const fileNameClean = file.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " ");
+
+      newItems.push({
+        id: itemId,
+        image: compressed,
+        name: fileNameClean || (locale === "ar" ? "منتج جديد" : "New Product"),
+        brand: "",
+        expiryDate: "",
+        expiryDateText: "",
+        multilingualNames: [],
+        quantity: 1,
+        quantityUnit: "pcs",
+        unitsPerCarton: 12,
+        looseUnits: 0,
+        status: "pending",
+      });
+    }
+
+    setBulkItems((prev) => [...prev, ...newItems]);
+    setIsBulkModalOpen(true);
+    if (bulkFileInputRef.current) bulkFileInputRef.current.value = "";
+
+    processBulkItems(newItems);
+  };
+
+  const processBulkItems = async (itemsToProcess: BulkUploadItem[]) => {
+    setIsBulkProcessing(true);
+
+    for (let i = 0; i < itemsToProcess.length; i++) {
+      const item = itemsToProcess[i];
+
+      setBulkItems((prev) =>
+        prev.map((it) => (it.id === item.id ? { ...it, status: "analyzing" } : it))
+      );
+
+      try {
+        const result = await analyzeProductImage(item.image);
+
+        const finalName = result.name || item.name;
+        const finalBrand = result.brand || "";
+        const finalExpiry = result.expiryDate ? parseAndNormalizeDate(result.expiryDate) : "";
+        const finalExpiryText = finalExpiry ? formatDateToDisplay(finalExpiry) : "";
+
+        setBulkItems((prev) =>
+          prev.map((it) =>
+            it.id === item.id
+              ? {
+                  ...it,
+                  name: finalName,
+                  brand: finalBrand,
+                  multilingualNames: result.multilingualNames || [],
+                  expiryDate: finalExpiry,
+                  expiryDateText: finalExpiryText,
+                  status: "completed",
+                }
+              : it
+          )
+        );
+      } catch (err: any) {
+        setBulkItems((prev) =>
+          prev.map((it) =>
+            it.id === item.id
+              ? {
+                  ...it,
+                  status: "completed",
+                  errorMessage: err?.message || "AI extraction fallback",
+                }
+              : it
+          )
+        );
+      }
+    }
+
+    setIsBulkProcessing(false);
+  };
+
+  const updateBulkItem = (id: string, updates: Partial<BulkUploadItem>) => {
+    setBulkItems((prev) =>
+      prev.map((it) => (it.id === id ? { ...it, ...updates } : it))
+    );
+  };
+
+  const removeBulkItem = (id: string) => {
+    setBulkItems((prev) => prev.filter((it) => it.id !== id));
+  };
+
+  const handleSaveAllBulkItems = () => {
+    if (bulkItems.length === 0) return;
+
+    const today = new Date().toISOString().split("T")[0];
+    const nowIso = new Date().toISOString();
+
+    const newProductRecords: Product[] = [];
+    const newLogs: ActivityLog[] = [];
+
+    bulkItems.forEach((item, idx) => {
+      const finalDate = item.expiryDate || parseAndNormalizeDate(item.expiryDateText) || today;
+      const qty = item.quantityUnit === "cartons"
+        ? (item.quantity * (item.unitsPerCarton || 12)) + (item.looseUnits || 0)
+        : item.quantity;
+
+      const prodId = `prod_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`;
+
+      const prod: Product = {
+        id: prodId,
+        name: item.name.trim() || `منتج ${idx + 1}`,
+        brand: item.brand.trim() || "علامة غير محددة",
+        multilingualNames: item.multilingualNames.length > 0 ? item.multilingualNames : [{ language: "Original", name: item.name }],
+        expiryDate: finalDate,
+        imageUrl: item.image,
         status: "active",
-        quantity: totalQuantityPcs,
-        quantityUnit: newBatchQuantityUnit,
-        unitsPerCarton: newBatchUnitsPerCarton,
-        looseUnits: newBatchLooseUnits,
+        quantity: qty,
+        quantityUnit: item.quantityUnit,
+        unitsPerCarton: item.unitsPerCarton,
+        looseUnits: item.looseUnits,
         createdAt: nowIso,
         updatedAt: nowIso,
         logs: [
@@ -984,42 +1278,40 @@ export default function App({
         ],
       };
 
-      const updatedProducts = [newProductRecord, ...products];
-      setProducts(updatedProducts);
-
-      // Sync to PostgreSQL DB
-      await dbSyncBranchData(activeBranch, updatedProducts, logs);
-
-      // Add activity log
-      const newLog: ActivityLog = {
-        id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      const log: ActivityLog = {
+        id: `log_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
         branchId: activeBranch,
-        productId: newProductId,
-        productName: addingBatchTarget.name,
-        brand: addingBatchTarget.brand,
+        productId: prodId,
+        productName: prod.name,
+        brand: prod.brand,
         employeeName: activeEmployee,
         action: "created",
         timestamp: nowIso,
       };
-      const updatedLogs = [newLog, ...logs];
-      setLogs(updatedLogs);
-      await dbSyncBranchData(activeBranch, updatedProducts, updatedLogs);
 
-      setAddingBatchTarget(null);
-      setNewBatchExpiryDate("");
-      setNewBatchExpiryDateText("");
-      setNewBatchQuantity(1);
-      setNewBatchQuantityUnit("pcs");
-      setNewBatchExpiryImage("");
+      newProductRecords.push(prod);
+      newLogs.push(log);
+    });
 
-      setToastMessage(locale === "ar" ? "تم إضافة تاريخ الصلاحية الجديد بنجاح! ✨" : "New expiry date batch added successfully!");
-      setShowNotificationToast(true);
-      setTimeout(() => setShowNotificationToast(false), 3000);
-    } catch (err: any) {
-      alert(err?.message || "Failed to add new batch");
-    } finally {
-      setAddingBatchBusy(false);
-    }
+    const updatedProducts = [...newProductRecords, ...products];
+    const updatedLogs = [...newLogs, ...logs];
+
+    setProducts(updatedProducts);
+    setLogs(updatedLogs);
+
+    setIsBulkModalOpen(false);
+    setBulkItems([]);
+
+    setToastMessage(
+      locale === "ar"
+        ? `تم إضافة ${newProductRecords.length} منتج جديد دفعة واحدة بنجاح! ✨`
+        : `Successfully added ${newProductRecords.length} products in bulk!`
+    );
+    setShowNotificationToast(true);
+    setTimeout(() => setShowNotificationToast(false), 4000);
+
+    // Sync to Supabase in background
+    syncBranchData(newProductRecords, newLogs);
   };
 
   // Handle Product Status Clicks (🛒 Sold, 👁️ Checked, ✅ Handled)
@@ -2248,11 +2540,30 @@ export default function App({
             {/* Launch Register Dialog Button */}
             <button
               onClick={() => setIsRegistering(true)}
-              className="bg-blue-600 text-white hover:bg-blue-700 px-5 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 shadow-sm transition-all active:scale-[0.98]"
+              className="bg-blue-600 text-white hover:bg-blue-700 px-5 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 shadow-sm transition-all active:scale-[0.98] cursor-pointer"
             >
               <PlusCircle className="w-5 h-5 text-white" />
               <span>{t.registerProduct}</span>
             </button>
+
+            {/* Bulk AI Product Upload Button */}
+            <button
+              onClick={() => bulkFileInputRef.current?.click()}
+              className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white hover:from-purple-700 hover:to-indigo-700 px-4 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 shadow-sm transition-all active:scale-[0.98] cursor-pointer"
+              title={locale === "ar" ? "إضافة مجموعة منتجات دفعة واحدة من الصور بالذكاء الاصطناعي" : "Bulk AI product upload from photos"}
+            >
+              <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
+              <span>{locale === "ar" ? "رفع دفعة صور ✨" : "Bulk Upload ✨"}</span>
+            </button>
+
+            <input
+              ref={bulkFileInputRef}
+              type="file"
+              multiple
+              accept="image/*"
+              onChange={handleBulkFilesSelect}
+              className="hidden"
+            />
           </div>
 
           {/* Registration Dialog Area */}
@@ -3912,6 +4223,258 @@ export default function App({
                       {addingBatchBusy ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
                       <span>{locale === "ar" ? "تأكيد إضافة التاريخ" : "Confirm New Date"}</span>
                     </button>
+                  </div>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* BULK UPLOAD AI OVERLAY MODAL */}
+          <AnimatePresence>
+            {isBulkModalOpen && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-xs flex items-center justify-center p-4"
+              >
+                <motion.div
+                  initial={{ scale: 0.95, y: 20 }}
+                  animate={{ scale: 1, y: 0 }}
+                  exit={{ scale: 0.95, y: 20 }}
+                  className="bg-white rounded-3xl max-w-4xl w-full shadow-2xl overflow-hidden border border-slate-200 flex flex-col max-h-[90vh]"
+                >
+                  {/* Modal Header */}
+                  <div className="p-5 bg-gradient-to-r from-purple-700 via-indigo-700 to-blue-700 text-white flex items-center justify-between shrink-0">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 bg-white/10 rounded-2xl">
+                        <Sparkles className="w-6 h-6 text-amber-300 animate-pulse" />
+                      </div>
+                      <div>
+                        <h2 className="text-base font-bold tracking-tight font-display flex items-center gap-2">
+                          <span>{locale === "ar" ? "إضافة مجموعة منتجات دفعة واحدة بالذكاء الاصطناعي" : "Bulk AI Product Upload"}</span>
+                          <span className="bg-amber-400 text-slate-950 text-[10px] px-2 py-0.5 rounded-full font-black uppercase">PRO AI</span>
+                        </h2>
+                        <p className="text-xs text-purple-100 mt-0.5">
+                          {locale === "ar"
+                            ? `تم رفع ${bulkItems.length} صورة. يحلل الذكاء الاصطناعي المنتجات والماركات والتواريخ تلقائياً.`
+                            : `${bulkItems.length} photos uploaded. Gemini AI extracts products, brands, and expiry dates automatically.`}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (!isBulkProcessing) {
+                          setIsBulkModalOpen(false);
+                          setBulkItems([]);
+                        }
+                      }}
+                      className="text-white/80 hover:text-white p-1.5 rounded-xl transition-colors cursor-pointer"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  {/* Progress Bar Header */}
+                  {isBulkProcessing && (
+                    <div className="bg-purple-50 border-b border-purple-150 px-6 py-2.5 flex items-center justify-between shrink-0 text-xs text-purple-800 font-bold">
+                      <div className="flex items-center gap-2">
+                        <RefreshCw className="w-4 h-4 animate-spin text-purple-600" />
+                        <span>
+                          {locale === "ar"
+                            ? `جاري معالجة الصور بالذكاء الاصطناعي (${bulkItems.filter(i => i.status === "completed").length} / ${bulkItems.length})...`
+                            : `Analyzing photos with Gemini AI (${bulkItems.filter(i => i.status === "completed").length} / ${bulkItems.length})...`}
+                        </span>
+                      </div>
+                      <div className="w-32 bg-purple-200 h-2 rounded-full overflow-hidden">
+                        <div
+                          className="bg-purple-600 h-full transition-all duration-300 rounded-full"
+                          style={{
+                            width: `${(bulkItems.filter(i => i.status === "completed").length / (bulkItems.length || 1)) * 100}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Body: Cards List */}
+                  <div className="p-6 overflow-y-auto space-y-4 flex-1" dir={locale === "ar" ? "rtl" : "ltr"}>
+                    {bulkItems.map((item, idx) => (
+                      <div
+                        key={item.id}
+                        className={`p-4 rounded-2xl border transition-all ${
+                          item.status === "analyzing"
+                            ? "bg-purple-50/50 border-purple-300 ring-2 ring-purple-400/20"
+                            : item.status === "completed"
+                            ? "bg-white border-slate-200 shadow-xs"
+                            : "bg-slate-50 border-slate-200"
+                        }`}
+                      >
+                        <div className="flex flex-col sm:flex-row gap-4 items-start">
+                          {/* Image Thumbnail */}
+                          <div className="w-20 h-20 rounded-xl bg-slate-100 border border-slate-200 overflow-hidden shrink-0 relative">
+                            <img src={item.image} alt={`Item ${idx + 1}`} className="w-full h-full object-cover" />
+                            <div className="absolute top-1 left-1 bg-slate-900/80 text-white text-[9px] font-mono px-1.5 py-0.5 rounded-md">
+                              #{idx + 1}
+                            </div>
+                          </div>
+
+                          {/* Item Details Form */}
+                          <div className="flex-1 space-y-3 w-full">
+                            {/* Status Banner */}
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1.5 text-xs font-bold">
+                                {item.status === "analyzing" ? (
+                                  <span className="text-purple-600 flex items-center gap-1.5">
+                                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                    {locale === "ar" ? "جاري التعرف بالذكاء الاصطناعي..." : "AI Extracting..."}
+                                  </span>
+                                ) : item.status === "completed" ? (
+                                  <span className="text-emerald-600 flex items-center gap-1.5">
+                                    <CheckCircle className="w-3.5 h-3.5" />
+                                    {locale === "ar" ? "تم التعرف بنجاح" : "Extracted"}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-400">
+                                    {locale === "ar" ? "في الانتظار..." : "Pending..."}
+                                  </span>
+                                )}
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => removeBulkItem(item.id)}
+                                className="text-slate-400 hover:text-red-600 p-1 rounded-lg transition-colors cursor-pointer"
+                                title={locale === "ar" ? "حذف هذه الصورة" : "Remove photo"}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+
+                            {/* Inputs Grid */}
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                              {/* Product Name */}
+                              <div>
+                                <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                                  {locale === "ar" ? "اسم المنتج" : "Product Name"}
+                                </label>
+                                <input
+                                  type="text"
+                                  value={item.name}
+                                  onChange={(e) => updateBulkItem(item.id, { name: e.target.value })}
+                                  className="w-full text-xs font-bold border border-slate-200 rounded-xl px-3 py-1.5 bg-white focus:border-purple-500 focus:outline-none"
+                                />
+                              </div>
+
+                              {/* Brand */}
+                              <div>
+                                <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                                  {locale === "ar" ? "الماركة" : "Brand"}
+                                </label>
+                                <input
+                                  type="text"
+                                  value={item.brand}
+                                  onChange={(e) => updateBulkItem(item.id, { brand: e.target.value })}
+                                  className="w-full text-xs font-semibold border border-slate-200 rounded-xl px-3 py-1.5 bg-white focus:border-purple-500 focus:outline-none"
+                                />
+                              </div>
+
+                              {/* Expiry Date Input */}
+                              <div>
+                                <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                                  {locale === "ar" ? "تاريخ الصلاحية (DD.MM.YYYY)" : "Expiry Date"}
+                                </label>
+                                <div className="relative">
+                                  <input
+                                    type="text"
+                                    value={item.expiryDateText}
+                                    onChange={(e) => {
+                                      const raw = e.target.value;
+                                      const isDeleting = raw.length < item.expiryDateText.length;
+                                      const masked = autoMaskDateInput(raw, isDeleting);
+                                      const norm = parseAndNormalizeDate(masked);
+                                      updateBulkItem(item.id, {
+                                        expiryDateText: masked,
+                                        expiryDate: norm,
+                                      });
+                                    }}
+                                    placeholder="25.12.2026"
+                                    className="w-full text-xs font-mono font-bold border border-slate-200 rounded-xl pl-3 pr-8 py-1.5 bg-white focus:border-purple-500 focus:outline-none"
+                                    dir="ltr"
+                                  />
+                                  <input
+                                    type="date"
+                                    id={`bulk-picker-${item.id}`}
+                                    value={item.expiryDate}
+                                    style={{ position: 'absolute', opacity: 0, width: 0, height: 0, top: 0, right: 0, pointerEvents: 'none' }}
+                                    onChange={(e) => {
+                                      const sel = e.target.value;
+                                      updateBulkItem(item.id, {
+                                        expiryDate: sel,
+                                        expiryDateText: sel ? formatDateToDisplay(sel) : "",
+                                      });
+                                    }}
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const el = document.getElementById(`bulk-picker-${item.id}`);
+                                      if (el) {
+                                        try { (el as any).showPicker(); } catch (err) { el.click(); }
+                                      }
+                                    }}
+                                    className="absolute inset-y-0 right-2 flex items-center text-purple-600 hover:text-purple-800 cursor-pointer"
+                                  >
+                                    <Calendar className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Modal Footer */}
+                  <div className="p-5 bg-slate-50 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => bulkFileInputRef.current?.click()}
+                      className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100 text-xs font-bold transition-colors cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>{locale === "ar" ? "إضافة المزيد من الصور" : "Add More Photos"}</span>
+                    </button>
+
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!isBulkProcessing) {
+                            setIsBulkModalOpen(false);
+                            setBulkItems([]);
+                          }
+                        }}
+                        className="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-500 hover:bg-slate-100 transition-colors cursor-pointer"
+                      >
+                        {t.cancel}
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={isBulkProcessing || bulkItems.length === 0}
+                        onClick={handleSaveAllBulkItems}
+                        className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 disabled:opacity-50 text-white text-xs font-bold px-6 py-2.5 rounded-xl flex items-center gap-2 transition-all shadow-md cursor-pointer active:scale-95"
+                      >
+                        <CheckCircle className="w-4 h-4" />
+                        <span>
+                          {locale === "ar"
+                            ? `حفظ وإضافة جميع المنتجات (${bulkItems.length})`
+                            : `Save & Add All Products (${bulkItems.length})`}
+                        </span>
+                      </button>
+                    </div>
                   </div>
                 </motion.div>
               </motion.div>

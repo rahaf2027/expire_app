@@ -11,9 +11,16 @@ const compressImage = (base64Str: string | null, maxDim = 600): Promise<string |
       resolve(base64Str);
       return;
     }
+    
+    // Safety timeout in case image loading stalls
+    const timer = setTimeout(() => {
+      resolve(base64Str);
+    }, 2000);
+
     const img = new Image();
     img.src = base64Str;
     img.onload = () => {
+      clearTimeout(timer);
       let width = img.width;
       let height = img.height;
 
@@ -39,6 +46,7 @@ const compressImage = (base64Str: string | null, maxDim = 600): Promise<string |
       }
     };
     img.onerror = () => {
+      clearTimeout(timer);
       resolve(base64Str);
     };
   });

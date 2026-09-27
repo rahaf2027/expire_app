@@ -126,3 +126,59 @@ If unreadable, return empty string for expiryDate and confidence 0.0.`;
   const response = await generateWithRetry(ai, config, imagePart, promptText);
   return JSON.parse(response.text || "{}");
 }
+
+// ─── Analyze full product image in single call (Name + Brand + Languages + Expiry) ───
+export async function analyzeProductImage(imageBase64: string): Promise<{
+  name: string;
+  brand: string;
+  multilingualNames: MultilingualName[];
+  expiryDate: string;
+}> {
+  const ai = getClient();
+
+  const matches = imageBase64.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
+  const mimeType = matches ? matches[1] : "image/jpeg";
+  const base64Data = matches ? matches[2] : imageBase64;
+
+  const imagePart = { inlineData: { mimeType, data: base64Data } };
+
+  const promptText = `Analyze this product packaging photo.
+Extract all details strictly in JSON:
+1. Extract the prominent product "name" in its main printed language. Include size/weight/volume if printed (e.g. 1L, 500g, 250ml, Pack of 6).
+2. Extract the "brand" or manufacturer name.
+3. Extract all distinct languages found on the packaging into "multilingualNames".
+4. If an expiry date / best before / MHD / EXP date is visible on the package, standardize it into 'YYYY-MM-DD'. If not visible, return an empty string for "expiryDate".`;
+
+  const config = {
+    responseMimeType: "application/json",
+    responseSchema: {
+      type: Type.OBJECT,
+      properties: {
+        name: { type: Type.STRING },
+        brand: { type: Type.STRING },
+        multilingualNames: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              language: { type: Type.STRING },
+              name: { type: Type.STRING },
+            },
+            required: ["language", "name"],
+          },
+        },
+        expiryDate: { type: Type.STRING },
+      },
+      required: ["name", "brand", "multilingualNames"],
+    },
+  };
+
+  const response = await generateWithRetry(ai, config, imagePart, promptText);
+  const parsed = JSON.parse(response.text || "{}");
+  return {
+    name: parsed.name || "",
+    brand: parsed.brand || "",
+    multilingualNames: parsed.multilingualNames || [],
+    expiryDate: parsed.expiryDate || "",
+  };
+}
